@@ -1,3 +1,4 @@
+import { AppShell } from "@/components/AppShell";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import { useCurrentWeek } from "@/hooks/use-current-week";
@@ -21,7 +22,7 @@ export const Route = createFileRoute("/setup")({
   }),
 });
 
-function SetupPage() {
+function SetupPageInner() {
   const { data, loading, refresh } = useCurrentWeek();
   const [drafts, setDrafts] = useState<Record<string, number>>({});
   const [title, setTitle] = useState("");
@@ -114,3 +115,6 @@ function SetupPage() {
     </div>
   );
 }
+
+
+function SetupPage() { return <AppShell><SetupPageInner /></AppShell>; }

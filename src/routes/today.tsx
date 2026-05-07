@@ -1,3 +1,4 @@
+import { AppShell } from "@/components/AppShell";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -41,7 +42,7 @@ function isSameLocalDay(iso: string, ref: Date) {
   );
 }
 
-function TodayPage() {
+function TodayPageInner() {
   const { data, loading, refresh } = useCurrentWeek();
   const [now, setNow] = useState(new Date());
 
@@ -311,3 +312,6 @@ function ClockOutDialog({
     </>
   );
 }
+
+
+function TodayPage() { return <AppShell><TodayPageInner /></AppShell>; }

@@ -1,3 +1,4 @@
+import { AppShell } from "@/components/AppShell";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -15,7 +16,7 @@ export const Route = createFileRoute("/history")({
   }),
 });
 
-function HistoryPage() {
+function HistoryPageInner() {
   const [videos, setVideos] = useState<any[]>([]);
   const [stagesByVideo, setStagesByVideo] = useState<Record<string, any[]>>({});
   const [loading, setLoading] = useState(true);
@@ -118,3 +119,6 @@ function Stat({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+
+
+function HistoryPage() { return <AppShell><HistoryPageInner /></AppShell>; }
