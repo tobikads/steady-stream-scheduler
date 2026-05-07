@@ -1,42 +1,30 @@
-## What's broken & what's missing
+## What I'll change
 
-After reviewing the code, here's what I found and how I'll fix it:
+### Today page — becomes a focused work cockpit
+- **Replace the "Stage progress" card** with a **Timer panel** in the same slot.
+  - When no block is active: shows the next block + countdown ("Next: Tue 9:00 AM in 1h 14m") and a big "Clock in" button for the current/next block.
+  - When clocked in: large running timer (HH:MM:SS) front-and-center, showing which stage you're on, target 1-hour work segment with a ring/progress that fills as the hour ticks.
+  - At the 1-hour mark: auto-switches to a **Break timer** (15 min) with its own countdown ring + a "Skip break / Back to work" button. Plays a soft chime + toast when work hour ends and when break ends.
+  - "Clock out" button stays here, opens the same inline % + full-block confirm panel.
+- **Keep** the editable title and the status bar (ahead/behind, buffer, blocks remaining).
+- **Remove** the today-blocks list duplication — only show the active block + next block in the timer panel. Today's other blocks listed compactly below the timer (time + stage label + status badge), no action buttons.
 
-### Bugs
-1. **Clock-in does nothing visible** — the click likely succeeds against the database but there's no error surfacing if it fails (e.g. RLS, stale session). I'll add error toasts on every Supabase write so silent failures stop being silent, and refresh state after every mutation.
-2. **Save & rebalance does nothing visible** — same root cause. The `.update()` calls don't check `error`, so a failure shows nothing. I'll also force a refresh and a clear "Saved" toast only when the writes actually succeed.
-3. **Video title not editable from Today** — currently you have to go to /setup. I'll add an inline editable title at the top of the Today page.
+### Week page — becomes the dashboard
+- **Add Overall progress card** at top: single large progress bar = sum(actual_blocks) / sum(planned_blocks) across all stages, with "X% of this week's video complete" and a blocks-completed/blocks-total readout.
+- **Add Stage progress card** (the one currently on Today) showing each stage's bar and completion check.
+- **Week grid stays** but becomes read-only: each block shows status badge (upcoming / done / skipped / in progress) and stage label. Today's column still highlighted. **Remove** the Start / Skip / Restore buttons — those live on Today only.
 
-### Interactivity upgrades
-4. **Week tab is static** — I'll make each block clickable: shows status (upcoming / in progress / done / skipped), lets you clock in or mark a block done/skipped from the week view, and visually flags today's blocks.
-5. **Today page polish** — show a "next block starts in…" countdown, surface the active stage progress at the top, and make the clock-out flow inline instead of a modal.
-6. **History tab** — add a per-stage efficiency view (avg actual vs planned across all videos) so you can see which stages you consistently under/over-estimate. Also add a "create next week's video" button so you're not stuck waiting.
+### Bug fixes (the "nothing happens" problems)
+- Title edit: investigate why the save isn't sticking. Likely the `onBlur` fires before state updates or the toast/error path is being swallowed. I'll add explicit logging, ensure `refresh()` re-pulls the video row, and confirm the update returns successfully (also check that `setEditingTitle(false)` doesn't unmount the input mid-save).
+- Clock in / save & rebalance: I'll verify in the console + network panel what's actually happening on click. If RLS or a missing field is rejecting the write, I'll surface the exact error and fix it. If the writes succeed but the UI doesn't refresh, I'll force a refetch + add a brief loading state so the user sees feedback.
 
-### Plan in detail
-
-**Files to change**
-
-- `src/routes/today.tsx`
-  - Inline editable video title (click to edit, save on blur)
-  - Wrap every Supabase call in try/catch with toast.error on failure
-  - Show "Next block: 2:30 PM (in 1h 14m)" when no block is active
-  - Replace clock-out modal with an inline expanding panel under the active block
-- `src/routes/week.tsx`
-  - Each block becomes interactive: badge for status, clock-in button if today, "mark done"/"skip" menu
-  - Highlight today's column
-  - Show stage progress chip per block
-- `src/routes/setup.tsx`
-  - Surface errors on save; toast only fires after writes confirm; refresh data after rebalance
-- `src/routes/history.tsx`
-  - Add "Estimation accuracy" card: per-stage avg actual/planned ratio across videos
-  - Add "Start next week" button that creates the next Monday's video
-- `src/lib/week-setup.ts`
-  - Add `createNextWeek(userId)` helper that mirrors `ensureCurrentWeek` for a given Monday
-  - Make `applyRebalance` return a success/error so callers can surface it
-
-**No schema changes** — all the data we need is already in the tables; this is a UX & wiring fix.
+### Files touched
+- `src/routes/today.tsx` — new TimerPanel component (work + break phases), drop stage-progress card, slim today-blocks list.
+- `src/routes/week.tsx` — add OverallProgress + StageProgress cards, strip action buttons from blocks.
+- `src/lib/schedule.ts` — add a small `overallProgress(stages)` helper if not already there.
+- Light shared component: `src/components/TimerRing.tsx` for the circular timer used by both work and break phases.
 
 ### Out of scope (ask if you want them)
-- Drag-and-drop reassignment of blocks to stages
-- Notifications outside the app (email/push when behind schedule)
-- Multi-video pipeline (working on next week's research while finishing this week's edit)
+- Notifications when the browser tab is hidden (Web Notifications API)
+- Configurable work/break durations (currently hardcoded 60 min work + 15 min break per your earlier rule)
+- Pausing the timer mid-block
