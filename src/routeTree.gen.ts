@@ -9,21 +9,36 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as WeekRouteImport } from './routes/week'
+import { Route as TodayRouteImport } from './routes/today'
+import { Route as SetupRouteImport } from './routes/setup'
 import { Route as LoginRouteImport } from './routes/login'
-import { Route as AppRouteImport } from './routes/_app'
+import { Route as HistoryRouteImport } from './routes/history'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as AppWeekRouteImport } from './routes/_app.week'
-import { Route as AppTodayRouteImport } from './routes/_app.today'
-import { Route as AppSetupRouteImport } from './routes/_app.setup'
-import { Route as AppHistoryRouteImport } from './routes/_app.history'
 
+const WeekRoute = WeekRouteImport.update({
+  id: '/week',
+  path: '/week',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TodayRoute = TodayRouteImport.update({
+  id: '/today',
+  path: '/today',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SetupRoute = SetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppRoute = AppRouteImport.update({
-  id: '/_app',
+const HistoryRoute = HistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -31,77 +46,72 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppWeekRoute = AppWeekRouteImport.update({
-  id: '/week',
-  path: '/week',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppTodayRoute = AppTodayRouteImport.update({
-  id: '/today',
-  path: '/today',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppSetupRoute = AppSetupRouteImport.update({
-  id: '/setup',
-  path: '/setup',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppHistoryRoute = AppHistoryRouteImport.update({
-  id: '/history',
-  path: '/history',
-  getParentRoute: () => AppRoute,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/history': typeof HistoryRoute
   '/login': typeof LoginRoute
-  '/history': typeof AppHistoryRoute
-  '/setup': typeof AppSetupRoute
-  '/today': typeof AppTodayRoute
-  '/week': typeof AppWeekRoute
+  '/setup': typeof SetupRoute
+  '/today': typeof TodayRoute
+  '/week': typeof WeekRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/history': typeof HistoryRoute
   '/login': typeof LoginRoute
-  '/history': typeof AppHistoryRoute
-  '/setup': typeof AppSetupRoute
-  '/today': typeof AppTodayRoute
-  '/week': typeof AppWeekRoute
+  '/setup': typeof SetupRoute
+  '/today': typeof TodayRoute
+  '/week': typeof WeekRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/_app': typeof AppRouteWithChildren
+  '/history': typeof HistoryRoute
   '/login': typeof LoginRoute
-  '/_app/history': typeof AppHistoryRoute
-  '/_app/setup': typeof AppSetupRoute
-  '/_app/today': typeof AppTodayRoute
-  '/_app/week': typeof AppWeekRoute
+  '/setup': typeof SetupRoute
+  '/today': typeof TodayRoute
+  '/week': typeof WeekRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/history' | '/setup' | '/today' | '/week'
+  fullPaths: '/' | '/history' | '/login' | '/setup' | '/today' | '/week'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/history' | '/setup' | '/today' | '/week'
-  id:
-    | '__root__'
-    | '/'
-    | '/_app'
-    | '/login'
-    | '/_app/history'
-    | '/_app/setup'
-    | '/_app/today'
-    | '/_app/week'
+  to: '/' | '/history' | '/login' | '/setup' | '/today' | '/week'
+  id: '__root__' | '/' | '/history' | '/login' | '/setup' | '/today' | '/week'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  AppRoute: typeof AppRouteWithChildren
+  HistoryRoute: typeof HistoryRoute
   LoginRoute: typeof LoginRoute
+  SetupRoute: typeof SetupRoute
+  TodayRoute: typeof TodayRoute
+  WeekRoute: typeof WeekRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/week': {
+      id: '/week'
+      path: '/week'
+      fullPath: '/week'
+      preLoaderRoute: typeof WeekRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/today': {
+      id: '/today'
+      path: '/today'
+      fullPath: '/today'
+      preLoaderRoute: typeof TodayRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/setup': {
+      id: '/setup'
+      path: '/setup'
+      fullPath: '/setup'
+      preLoaderRoute: typeof SetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
@@ -109,11 +119,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_app': {
-      id: '/_app'
-      path: ''
-      fullPath: '/'
-      preLoaderRoute: typeof AppRouteImport
+    '/history': {
+      id: '/history'
+      path: '/history'
+      fullPath: '/history'
+      preLoaderRoute: typeof HistoryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -123,58 +133,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_app/week': {
-      id: '/_app/week'
-      path: '/week'
-      fullPath: '/week'
-      preLoaderRoute: typeof AppWeekRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/today': {
-      id: '/_app/today'
-      path: '/today'
-      fullPath: '/today'
-      preLoaderRoute: typeof AppTodayRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/setup': {
-      id: '/_app/setup'
-      path: '/setup'
-      fullPath: '/setup'
-      preLoaderRoute: typeof AppSetupRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/history': {
-      id: '/_app/history'
-      path: '/history'
-      fullPath: '/history'
-      preLoaderRoute: typeof AppHistoryRouteImport
-      parentRoute: typeof AppRoute
-    }
   }
 }
 
-interface AppRouteChildren {
-  AppHistoryRoute: typeof AppHistoryRoute
-  AppSetupRoute: typeof AppSetupRoute
-  AppTodayRoute: typeof AppTodayRoute
-  AppWeekRoute: typeof AppWeekRoute
-}
-
-const AppRouteChildren: AppRouteChildren = {
-  AppHistoryRoute: AppHistoryRoute,
-  AppSetupRoute: AppSetupRoute,
-  AppTodayRoute: AppTodayRoute,
-  AppWeekRoute: AppWeekRoute,
-}
-
-const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
-
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AppRoute: AppRouteWithChildren,
+  HistoryRoute: HistoryRoute,
   LoginRoute: LoginRoute,
+  SetupRoute: SetupRoute,
+  TodayRoute: TodayRoute,
+  WeekRoute: WeekRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
