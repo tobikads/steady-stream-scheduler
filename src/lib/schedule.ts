@@ -152,6 +152,19 @@ export function isClosedBlockStatus(status: string): boolean {
   return status === "done" || status === "partial" || status === "missed" || status === "skipped";
 }
 
+function missedPortionsByStage(blocks: BlockInput[]) {
+  const missed = new Map<string, number>();
+  for (const block of blocks) {
+    if ((block.status === "missed" || block.status === "skipped") && block.assigned_stage_id) {
+      missed.set(
+        block.assigned_stage_id,
+        (missed.get(block.assigned_stage_id) ?? 0) + Number(block.assigned_portion || 1),
+      );
+    }
+  }
+  return missed;
+}
+
 /**
  * Computes new stage assignments for upcoming blocks.
  * - Closed blocks keep their existing assignment.
@@ -162,10 +175,12 @@ export function isClosedBlockStatus(status: string): boolean {
  */
 export function rebalance(stages: StageInput[], blocks: BlockInput[]): RebalanceAssignment[] {
   const ordered = [...stages].sort((a, b) => a.order_index - b.order_index);
-  // Remaining blocks per stage (round up to whole blocks)
+  const missed = missedPortionsByStage(blocks);
+  // Missed blocks should not be completed, but they should consume their original place
+  // on the timeline so Thursday does not slide back to Monday's work.
   const remaining = new Map<string, number>();
   for (const s of ordered) {
-    const left = Math.max(0, s.planned_blocks - s.actual_blocks);
+    const left = Math.max(0, s.planned_blocks - s.actual_blocks - (missed.get(s.id) ?? 0));
     remaining.set(s.id, Math.ceil(left));
   }
 

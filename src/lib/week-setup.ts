@@ -12,6 +12,19 @@ import {
   StageKind,
 } from "./schedule";
 
+async function findWeekVideo(userId: string, weekStart: string) {
+  const { data, error } = await supabase
+    .from("videos")
+    .select("id, updated_at, created_at")
+    .eq("user_id", userId)
+    .eq("week_start", weekStart)
+    .order("updated_at", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  return data?.[0] ?? null;
+}
+
 async function seedWeek(userId: string, monday: Date): Promise<string> {
   const weekStart = dateToISODate(monday);
   const release = dateToISODate(addDays(monday, 5));
@@ -65,11 +78,16 @@ async function syncStageDefaults(videoId: string) {
   if (error) throw error;
 
   const updates = (stages ?? [])
-    .map((stage) => ({
-      id: stage.id,
-      plannedBlocks: STAGE_DEFAULTS[stage.kind as StageKind].default,
-      currentBlocks: Number(stage.planned_blocks),
-    }))
+    .map((stage) => {
+      const defaultPlan = STAGE_DEFAULTS[stage.kind as StageKind];
+      if (!defaultPlan) return null;
+      return {
+        id: stage.id,
+        plannedBlocks: defaultPlan.default,
+        currentBlocks: Number(stage.planned_blocks),
+      };
+    })
+    .filter((stage): stage is NonNullable<typeof stage> => stage !== null)
     .filter((stage) => stage.currentBlocks !== stage.plannedBlocks);
 
   if (updates.length === 0) return false;
@@ -88,13 +106,7 @@ export async function ensureCurrentWeek(userId: string): Promise<string> {
   const monday = getMondayOf(new Date());
   const weekStart = dateToISODate(monday);
 
-  const { data: existing, error: existingErr } = await supabase
-    .from("videos")
-    .select("id")
-    .eq("user_id", userId)
-    .eq("week_start", weekStart)
-    .maybeSingle();
-  if (existingErr) throw existingErr;
+  const existing = await findWeekVideo(userId, weekStart);
 
   if (existing) {
     const defaultsChanged = await syncStageDefaults(existing.id);
@@ -120,13 +132,7 @@ export async function createNextWeek(userId: string): Promise<string> {
   const thisMonday = getMondayOf(new Date());
   const nextMonday = addDays(thisMonday, 7);
   const weekStart = dateToISODate(nextMonday);
-  const { data: existing, error: existingErr } = await supabase
-    .from("videos")
-    .select("id")
-    .eq("user_id", userId)
-    .eq("week_start", weekStart)
-    .maybeSingle();
-  if (existingErr) throw existingErr;
+  const existing = await findWeekVideo(userId, weekStart);
   if (existing) return existing.id;
   return seedWeek(userId, nextMonday);
 }
