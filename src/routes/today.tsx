@@ -43,7 +43,7 @@ export const Route = createFileRoute("/today")({
   component: TodayPage,
   head: () => ({
     meta: [
-      { title: "Today — Cadence" },
+      { title: "Today — YT Video Scheduler" },
       { name: "description", content: "Clock in and run your work timer." },
     ],
   }),

@@ -18,7 +18,7 @@ export const Route = createFileRoute("/week")({
   component: WeekPage,
   head: () => ({
     meta: [
-      { title: "Week — Cadence" },
+      { title: "Week — YT Video Scheduler" },
       {
         name: "description",
         content: "Overall video progress, stage progress, and the week's schedule.",

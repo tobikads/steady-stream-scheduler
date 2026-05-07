@@ -36,7 +36,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <header className="border-b border-border">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
           <Link to="/today" className="font-semibold tracking-tight text-lg">
-            Cadence
+            YT Video Scheduler
           </Link>
           <nav className="flex items-center gap-1 text-sm">
             <NavItem to="/today" icon={<LayoutDashboard className="size-4" />} label="Today" />

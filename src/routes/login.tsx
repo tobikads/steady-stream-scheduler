@@ -16,7 +16,7 @@ export const Route = createFileRoute("/login")({
   },
   head: () => ({
     meta: [
-      { title: "Sign in — Cadence" },
+      { title: "Sign in — YT Video Scheduler" },
       { name: "description", content: "Sign in to your weekly video planner." },
     ],
   }),
@@ -58,7 +58,7 @@ function LoginPage() {
     <div className="min-h-screen flex items-center justify-center px-4 bg-background">
       <Card className="w-full max-w-sm p-8 space-y-6">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Cadence</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">YT Video Scheduler</h1>
           <p className="text-sm text-muted-foreground">
             Ship one video every Saturday. Without the chaos.
           </p>

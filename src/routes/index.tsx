@@ -8,7 +8,7 @@ export const Route = createFileRoute("/")({
   component: LandingPage,
   head: () => ({
     meta: [
-      { title: "Cadence — Ship one video every Saturday" },
+      { title: "YT Video Scheduler — Ship one video every Saturday" },
       {
         name: "description",
         content:
@@ -31,7 +31,7 @@ function LandingPage() {
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       <header className="border-b border-border">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-          <span className="font-semibold tracking-tight text-lg">Cadence</span>
+          <span className="font-semibold tracking-tight text-lg">YT Video Scheduler</span>
           <Link to="/login">
             <Button variant="ghost" size="sm">Sign in</Button>
           </Link>
@@ -50,7 +50,7 @@ function LandingPage() {
           </h1>
           <p className="text-lg text-muted-foreground max-w-xl mx-auto">
             16 scheduled work blocks per week. Clock in, log your progress, and
-            Cadence rebalances your week toward Saturday — automatically.
+            YT Video Scheduler rebalances your week toward Saturday — automatically.
           </p>
           <div className="flex items-center justify-center gap-3 pt-2">
             <Link to="/login">
