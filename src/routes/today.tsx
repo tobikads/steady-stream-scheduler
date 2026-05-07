@@ -18,7 +18,7 @@ import { Slider } from "@/components/ui/slider";
 import { Play, Square, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 
-export const Route = createFileRoute("/_app/today")({
+export const Route = createFileRoute("/today")({
   component: TodayPage,
   head: () => ({
     meta: [

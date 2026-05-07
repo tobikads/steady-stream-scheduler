@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DAY_LABELS, STAGE_LABEL, StageKind } from "@/lib/schedule";
 
-export const Route = createFileRoute("/_app/week")({
+export const Route = createFileRoute("/week")({
   component: WeekPage,
   head: () => ({
     meta: [

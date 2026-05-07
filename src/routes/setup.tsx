@@ -11,7 +11,7 @@ import { applyRebalance } from "@/lib/week-setup";
 import { STAGE_DEFAULTS, STAGE_LABEL, StageKind, TOTAL_WEEKLY_BLOCKS } from "@/lib/schedule";
 import { toast } from "sonner";
 
-export const Route = createFileRoute("/_app/setup")({
+export const Route = createFileRoute("/setup")({
   component: SetupPage,
   head: () => ({
     meta: [

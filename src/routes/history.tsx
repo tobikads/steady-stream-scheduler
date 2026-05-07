@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { STAGE_LABEL, StageKind } from "@/lib/schedule";
 
-export const Route = createFileRoute("/_app/history")({
+export const Route = createFileRoute("/history")({
   component: HistoryPage,
   head: () => ({
     meta: [
