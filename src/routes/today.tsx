@@ -918,20 +918,55 @@ function TimerRing({
   label: string;
   accent: "primary" | "amber";
 }) {
-  const size = 220;
-  const stroke = 12;
-  const r = (size - stroke) / 2;
+  const size = 280;
+  const stroke = 10;
+  const r = (size - stroke * 4) / 2;
   const c = 2 * Math.PI * r;
   const dash = (pct / 100) * c;
-  const color = accent === "primary" ? "hsl(var(--primary))" : "rgb(217 119 6)";
+  const gradId = accent === "primary" ? "ringGradPrimary" : "ringGradAmber";
+  const stops =
+    accent === "primary"
+      ? [
+          { o: "0%", c: "oklch(0.82 0.18 200)" },
+          { o: "50%", c: "oklch(0.72 0.17 245)" },
+          { o: "100%", c: "oklch(0.6 0.2 285)" },
+        ]
+      : [
+          { o: "0%", c: "oklch(0.85 0.15 90)" },
+          { o: "100%", c: "oklch(0.72 0.18 50)" },
+        ];
+
   return (
     <div className="relative" style={{ width: size, height: size }}>
-      <svg width={size} height={size} className="-rotate-90">
+      <svg
+        width={size}
+        height={size}
+        className="absolute inset-0"
+        style={{ animation: "timer-spin 18s linear infinite" }}
+      >
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={(size - stroke) / 2}
+          stroke="oklch(0.72 0.17 245 / 0.3)"
+          strokeWidth={1}
+          strokeDasharray="2 8"
+          fill="none"
+        />
+      </svg>
+      <svg width={size} height={size} className="-rotate-90 relative timer-glow">
+        <defs>
+          <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="100%">
+            {stops.map((s) => (
+              <stop key={s.o} offset={s.o} stopColor={s.c} />
+            ))}
+          </linearGradient>
+        </defs>
         <circle
           cx={size / 2}
           cy={size / 2}
           r={r}
-          stroke="hsl(var(--border))"
+          stroke="oklch(1 0 0 / 0.06)"
           strokeWidth={stroke}
           fill="none"
         />
@@ -939,7 +974,7 @@ function TimerRing({
           cx={size / 2}
           cy={size / 2}
           r={r}
-          stroke={color}
+          stroke={`url(#${gradId})`}
           strokeWidth={stroke}
           fill="none"
           strokeDasharray={`${dash} ${c - dash}`}
@@ -947,8 +982,40 @@ function TimerRing({
           style={{ transition: "stroke-dasharray 1s linear" }}
         />
       </svg>
-      <div className="absolute inset-0 flex items-center justify-center text-4xl font-light tabular-nums tracking-tight">
-        {label}
+      <svg
+        width={size}
+        height={size}
+        className="absolute inset-0 -rotate-90 opacity-40"
+        viewBox={`0 0 ${size} ${size}`}
+      >
+        {Array.from({ length: 60 }).map((_, i) => {
+          const angle = (i / 60) * 2 * Math.PI;
+          const inner = r - stroke;
+          const outer = r - stroke / 2 - (i % 5 === 0 ? 6 : 2);
+          const x1 = size / 2 + Math.cos(angle) * inner;
+          const y1 = size / 2 + Math.sin(angle) * inner;
+          const x2 = size / 2 + Math.cos(angle) * outer;
+          const y2 = size / 2 + Math.sin(angle) * outer;
+          return (
+            <line
+              key={i}
+              x1={x1}
+              y1={y1}
+              x2={x2}
+              y2={y2}
+              stroke="oklch(0.72 0.17 245)"
+              strokeWidth={i % 5 === 0 ? 1.5 : 0.5}
+            />
+          );
+        })}
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <div className="text-5xl font-extralight tabular-nums tracking-tight bg-gradient-to-br from-foreground to-primary bg-clip-text text-transparent">
+          {label}
+        </div>
+        <div className="mt-1 text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
+          {Math.round(pct)}% · {accent === "primary" ? "focus" : "rest"}
+        </div>
       </div>
     </div>
   );
