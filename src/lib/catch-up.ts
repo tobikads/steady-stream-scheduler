@@ -4,6 +4,8 @@ import { DAY_LABELS, STAGE_LABEL, addDays, isClosedBlockStatus } from "@/lib/sch
 export const DEFAULT_BREAK_MINUTES = 15;
 export const SHORT_BREAK_MINUTES = 10;
 export const DEFAULT_BLOCK_MINUTES = 210;
+export const MIN_CATCH_UP_MINUTES = 30;
+export const MAX_CATCH_UP_MINUTES = 120;
 
 export type CatchUpAction =
   | {
@@ -37,6 +39,7 @@ export interface CatchUpPlan {
   futureScheduledMinutes: number;
   missedOrShortMinutes: number;
   deficitMinutes: number;
+  targetRecoveryMinutes: number;
   recoveryMinutes: number;
   remainingGapMinutes: number;
   actions: CatchUpAction[];
@@ -166,9 +169,13 @@ export function buildCatchUpPlan(
     futureBlocks.reduce((sum, block) => sum + blockDurationMinutes(block), 0) +
     alreadyAppliedBreakGain;
   const deficitMinutes = Math.max(0, Math.round(workLeftMinutes - futureScheduledMinutes));
+  const targetRecoveryMinutes =
+    deficitMinutes === 0
+      ? 0
+      : Math.min(MAX_CATCH_UP_MINUTES, Math.max(MIN_CATCH_UP_MINUTES, deficitMinutes));
   const actions: CatchUpAction[] = [];
   const queue = stageQueue(stages, blocks);
-  let remaining = deficitMinutes;
+  let remaining = targetRecoveryMinutes;
   let stageIndex = 0;
 
   for (const window of availableExtraWindows(video, blocks, now)) {
@@ -230,6 +237,7 @@ export function buildCatchUpPlan(
     futureScheduledMinutes: Math.round(futureScheduledMinutes),
     missedOrShortMinutes: Math.round(missedOrShortMinutes(blocks)),
     deficitMinutes,
+    targetRecoveryMinutes,
     recoveryMinutes,
     remainingGapMinutes,
     actions,

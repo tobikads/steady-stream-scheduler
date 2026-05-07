@@ -245,11 +245,12 @@ function CatchUpPageInner() {
           </div>
         </div>
         <Progress value={plan.overallPct} className="h-3" />
-        <div className="grid gap-3 sm:grid-cols-4 text-sm">
+        <div className="grid gap-3 sm:grid-cols-5 text-sm">
           <Stat label="Work left" value={formatCatchUpMinutes(plan.workLeftMinutes)} />
           <Stat label="Scheduled ahead" value={formatCatchUpMinutes(plan.futureScheduledMinutes)} />
           <Stat label="Missed or short" value={formatCatchUpMinutes(plan.missedOrShortMinutes)} />
-          <Stat label="Need to recover" value={formatCatchUpMinutes(plan.deficitMinutes)} />
+          <Stat label="Real gap" value={formatCatchUpMinutes(plan.deficitMinutes)} />
+          <Stat label="Recovery target" value={formatCatchUpMinutes(plan.targetRecoveryMinutes)} />
         </div>
       </Card>
 
