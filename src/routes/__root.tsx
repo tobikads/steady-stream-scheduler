@@ -72,14 +72,18 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
+      { title: "YT Schedule" },
+      { name: "description", content: "Steady Stream Studio helps video creators manage their weekly production schedule and track progress." },
       { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { property: "og:title", content: "YT Schedule" },
+      { property: "og:description", content: "Steady Stream Studio helps video creators manage their weekly production schedule and track progress." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:title", content: "YT Schedule" },
+      { name: "twitter:description", content: "Steady Stream Studio helps video creators manage their weekly production schedule and track progress." },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/3033bebd-b8a6-4e5e-897d-94b08935a728/id-preview-368c4552--f2ac5b0d-362f-4f7f-8d06-3e10e2014787.lovable.app-1778176034899.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/3033bebd-b8a6-4e5e-897d-94b08935a728/id-preview-368c4552--f2ac5b0d-362f-4f7f-8d06-3e10e2014787.lovable.app-1778176034899.png" },
     ],
     links: [
       {
