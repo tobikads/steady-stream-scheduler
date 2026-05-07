@@ -853,7 +853,7 @@ function TimerPanel({
 
   // Active — work or break
   if (phase === "break") {
-    const ringPct = (breakElapsed / BREAK_MS) * 100;
+    const ringPct = (breakRemaining / BREAK_MS) * 100;
     return (
       <Card className="p-8 flex flex-col items-center text-center gap-4">
         <div className="flex items-center gap-2 text-amber-600 text-xs uppercase tracking-wider">
