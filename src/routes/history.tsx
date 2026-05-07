@@ -1,4 +1,5 @@
 import { AppShell } from "@/components/AppShell";
+import { CloudSyncNotice } from "@/components/CloudSyncNotice";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -76,6 +77,7 @@ function HistoryPageInner() {
   const [mode, setMode] = useState<"supabase" | "local">("supabase");
   const [tick, setTick] = useState(0);
   const currentWeekStart = dateToISODate(getMondayOf(new Date()));
+  const refresh = () => setTick((t) => t + 1);
 
   useEffect(() => {
     let cancelled = false;
@@ -170,7 +172,7 @@ function HistoryPageInner() {
         <Card className="p-6 space-y-3">
           <h1 className="text-lg font-semibold">History did not load</h1>
           <p className="text-sm text-muted-foreground">{error}</p>
-          <Button onClick={() => setTick((t) => t + 1)}>Try again</Button>
+          <Button onClick={refresh}>Try again</Button>
         </Card>
       </div>
     );
@@ -190,10 +192,8 @@ function HistoryPageInner() {
         </Badge>
       </div>
 
-      {mode === "local" && error && (
-        <Card className="p-4 border-amber-500/30 bg-amber-500/10 text-sm text-amber-800">
-          Cloud sync is unavailable, so history is showing local data. {error}
-        </Card>
+      {mode === "local" && (
+        <CloudSyncNotice message={error} onRetry={refresh} showSignIn={!error} />
       )}
 
       {Object.keys(accuracy).length > 0 && (

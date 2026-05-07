@@ -2,7 +2,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { LayoutDashboard, CalendarRange, History, LogOut } from "lucide-react";
+import { CalendarRange, History, LayoutDashboard, LogIn, LogOut } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 
 type NavPath = "/today" | "/week" | "/history";
@@ -14,11 +14,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      setEmail(data.user?.email ?? "Local mode");
+      setEmail(data.user?.email ?? null);
       setReady(true);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-      setEmail(session?.user.email ?? "Local mode");
+      setEmail(session?.user.email ?? null);
     });
     return () => sub.subscription.unsubscribe();
   }, [navigate]);
@@ -27,7 +27,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     await supabase.auth.signOut();
-    setEmail("Local mode");
+    setEmail(null);
     navigate({ to: "/today" });
   };
 
@@ -44,10 +44,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <NavItem to="/history" icon={<History className="size-4" />} label="History" />
           </nav>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground hidden sm:inline">{email}</span>
-            <Button variant="ghost" size="icon" onClick={signOut} aria-label="Sign out">
-              <LogOut className="size-4" />
-            </Button>
+            <span className="text-xs text-muted-foreground hidden md:inline">
+              {email ?? "Local mode"}
+            </span>
+            {email ? (
+              <Button variant="outline" size="sm" onClick={signOut}>
+                <LogOut className="size-4" />
+                Sign out
+              </Button>
+            ) : (
+              <Button asChild size="sm">
+                <Link to="/login">
+                  <LogIn className="size-4" />
+                  Sign in
+                </Link>
+              </Button>
+            )}
           </div>
         </div>
       </header>

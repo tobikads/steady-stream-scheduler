@@ -1,4 +1,5 @@
 import { AppShell } from "@/components/AppShell";
+import { CloudSyncNotice } from "@/components/CloudSyncNotice";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -192,7 +193,9 @@ function TodayPageInner() {
         )}
       </div>
 
-      {cloudError && <CloudNotice message={cloudError} />}
+      {(mode === "local" || cloudError) && (
+        <CloudSyncNotice message={cloudError} onRetry={refresh} showSignIn={!cloudError} />
+      )}
 
       <section>
         <h2 className="text-sm font-medium uppercase tracking-wider text-muted-foreground mb-3">
@@ -257,14 +260,6 @@ function TodayPageInner() {
         onRenameStageTask={productivity.renameStageTask}
       />
     </div>
-  );
-}
-
-function CloudNotice({ message }: { message: string }) {
-  return (
-    <Card className="p-4 border-amber-500/30 bg-amber-500/10 text-sm text-amber-800">
-      Cloud sync is unavailable, so this page is running in local mode. {message}
-    </Card>
   );
 }
 
