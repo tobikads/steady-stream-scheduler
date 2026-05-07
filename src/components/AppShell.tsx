@@ -1,30 +1,31 @@
-import { createFileRoute, Link, Outlet, redirect, useNavigate, useRouter } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { LayoutDashboard, CalendarRange, Sliders, History, LogOut } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 
-export const Route = createFileRoute("/_app")({
-  component: AppLayout,
-  beforeLoad: async () => {
-    if (typeof window === "undefined") return;
-    const { data } = await supabase.auth.getUser();
-    if (!data.user) throw redirect({ to: "/login" });
-  },
-});
-
-function AppLayout() {
+export function AppShell({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const [email, setEmail] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email ?? null));
+    supabase.auth.getUser().then(({ data }) => {
+      if (!data.user) {
+        navigate({ to: "/login" });
+        return;
+      }
+      setEmail(data.user.email ?? null);
+      setReady(true);
+    });
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
       if (!session) navigate({ to: "/login" });
     });
     return () => sub.subscription.unsubscribe();
   }, [navigate]);
+
+  if (!ready) return <div className="min-h-screen bg-background" />;
 
   const signOut = async () => {
     await supabase.auth.signOut();
@@ -52,9 +53,7 @@ function AppLayout() {
           </div>
         </div>
       </header>
-      <main className="flex-1">
-        <Outlet />
-      </main>
+      <main className="flex-1">{children}</main>
       <Toaster richColors position="top-right" />
     </div>
   );

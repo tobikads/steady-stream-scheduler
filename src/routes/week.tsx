@@ -1,10 +1,11 @@
+import { AppShell } from "@/components/AppShell";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCurrentWeek } from "@/hooks/use-current-week";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { DAY_LABELS, STAGE_LABEL, StageKind } from "@/lib/schedule";
 
-export const Route = createFileRoute("/_app/week")({
+export const Route = createFileRoute("/week")({
   component: WeekPage,
   head: () => ({
     meta: [
@@ -18,7 +19,7 @@ function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-function WeekPage() {
+function WeekPageInner() {
   const { data, loading } = useCurrentWeek();
   if (loading || !data) return <div className="p-8 text-muted-foreground">Loading…</div>;
 
@@ -75,3 +76,6 @@ function WeekPage() {
     </div>
   );
 }
+
+
+function WeekPage() { return <AppShell><WeekPageInner /></AppShell>; }
