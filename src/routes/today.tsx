@@ -883,7 +883,7 @@ function TimerPanel({
     <Card className="p-8 flex flex-col items-center text-center gap-4">
       <div className="text-xs uppercase tracking-wider text-muted-foreground">Working on</div>
       <div className="text-2xl font-semibold">{stageLabel}</div>
-      <TimerRing pct={ringPct} label={fmtClock(elapsed)} accent="primary" />
+      <TimerRing pct={ringPct} label={fmtClock(workRemaining)} accent="primary" />
       <div className="text-xs text-muted-foreground tabular-nums">
         {isPaused ? (
           "Paused"
