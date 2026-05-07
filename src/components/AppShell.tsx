@@ -2,8 +2,10 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { LayoutDashboard, CalendarRange, Sliders, History, LogOut } from "lucide-react";
+import { LayoutDashboard, CalendarRange, History, LogOut } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
+
+type NavPath = "/today" | "/week" | "/history";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
@@ -12,15 +14,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      if (!data.user) {
-        navigate({ to: "/login" });
-        return;
-      }
-      setEmail(data.user.email ?? null);
+      setEmail(data.user?.email ?? "Local mode");
       setReady(true);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-      if (!session) navigate({ to: "/login" });
+      setEmail(session?.user.email ?? "Local mode");
     });
     return () => sub.subscription.unsubscribe();
   }, [navigate]);
@@ -29,7 +27,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     await supabase.auth.signOut();
-    navigate({ to: "/login" });
+    setEmail("Local mode");
+    navigate({ to: "/today" });
   };
 
   return (
@@ -42,7 +41,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <nav className="flex items-center gap-1 text-sm">
             <NavItem to="/today" icon={<LayoutDashboard className="size-4" />} label="Today" />
             <NavItem to="/week" icon={<CalendarRange className="size-4" />} label="Week" />
-            <NavItem to="/setup" icon={<Sliders className="size-4" />} label="Setup" />
             <NavItem to="/history" icon={<History className="size-4" />} label="History" />
           </nav>
           <div className="flex items-center gap-2">
@@ -59,12 +57,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function NavItem({ to, icon, label }: { to: string; icon: React.ReactNode; label: string }) {
+function NavItem({ to, icon, label }: { to: NavPath; icon: React.ReactNode; label: string }) {
   return (
     <Link
-      to={to as any}
+      to={to}
       className="px-3 py-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent flex items-center gap-1.5"
-      activeProps={{ className: "px-3 py-1.5 rounded-md bg-accent text-foreground flex items-center gap-1.5" }}
+      activeProps={{
+        className: "px-3 py-1.5 rounded-md bg-accent text-foreground flex items-center gap-1.5",
+      }}
     >
       {icon}
       <span className="hidden sm:inline">{label}</span>

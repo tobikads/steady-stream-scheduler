@@ -8,6 +8,8 @@ import {
   getMondayOf,
   addDays,
   rebalance,
+  Slot,
+  StageKind,
 } from "./schedule";
 
 async function seedWeek(userId: string, monday: Date): Promise<string> {
@@ -20,7 +22,7 @@ async function seedWeek(userId: string, monday: Date): Promise<string> {
       user_id: userId,
       week_start: weekStart,
       release_date: release,
-      title: `Video — week of ${weekStart}`,
+      title: `Video - week of ${weekStart}`,
     })
     .select("id")
     .single();
@@ -50,31 +52,63 @@ async function seedWeek(userId: string, monday: Date): Promise<string> {
   const { error: bErr } = await supabase.from("work_blocks").insert(blocksPayload);
   if (bErr) throw bErr;
 
-  await applyRebalance(video.id);
+  const rebalanceResult = await applyRebalance(video.id);
+  if (!rebalanceResult.ok) throw new Error(rebalanceResult.error ?? "rebalance failed");
   return video.id;
+}
+
+async function syncStageDefaults(videoId: string) {
+  const { data: stages, error } = await supabase
+    .from("stages")
+    .select("id, kind, planned_blocks")
+    .eq("video_id", videoId);
+  if (error) throw error;
+
+  const updates = (stages ?? [])
+    .map((stage) => ({
+      id: stage.id,
+      plannedBlocks: STAGE_DEFAULTS[stage.kind as StageKind].default,
+      currentBlocks: Number(stage.planned_blocks),
+    }))
+    .filter((stage) => stage.currentBlocks !== stage.plannedBlocks);
+
+  if (updates.length === 0) return false;
+
+  const results = await Promise.all(
+    updates.map((stage) =>
+      supabase.from("stages").update({ planned_blocks: stage.plannedBlocks }).eq("id", stage.id),
+    ),
+  );
+  const firstErr = results.find((result) => result.error)?.error;
+  if (firstErr) throw firstErr;
+  return true;
 }
 
 export async function ensureCurrentWeek(userId: string): Promise<string> {
   const monday = getMondayOf(new Date());
   const weekStart = dateToISODate(monday);
 
-  const { data: existing } = await supabase
+  const { data: existing, error: existingErr } = await supabase
     .from("videos")
     .select("id")
     .eq("user_id", userId)
     .eq("week_start", weekStart)
     .maybeSingle();
+  if (existingErr) throw existingErr;
 
   if (existing) {
+    const defaultsChanged = await syncStageDefaults(existing.id);
     // Self-heal: if blocks exist but none are assigned, run rebalance.
-    const { data: anyAssigned } = await supabase
+    const { data: anyAssigned, error: assignedErr } = await supabase
       .from("work_blocks")
       .select("id")
       .eq("video_id", existing.id)
       .not("assigned_stage_id", "is", null)
       .limit(1);
-    if (!anyAssigned || anyAssigned.length === 0) {
-      await applyRebalance(existing.id);
+    if (assignedErr) throw assignedErr;
+    if (defaultsChanged || !anyAssigned || anyAssigned.length === 0) {
+      const rebalanceResult = await applyRebalance(existing.id);
+      if (!rebalanceResult.ok) throw new Error(rebalanceResult.error ?? "rebalance failed");
     }
     return existing.id;
   }
@@ -86,14 +120,43 @@ export async function createNextWeek(userId: string): Promise<string> {
   const thisMonday = getMondayOf(new Date());
   const nextMonday = addDays(thisMonday, 7);
   const weekStart = dateToISODate(nextMonday);
-  const { data: existing } = await supabase
+  const { data: existing, error: existingErr } = await supabase
     .from("videos")
     .select("id")
     .eq("user_id", userId)
     .eq("week_start", weekStart)
     .maybeSingle();
+  if (existingErr) throw existingErr;
   if (existing) return existing.id;
   return seedWeek(userId, nextMonday);
+}
+
+export async function markOverdueBlocks(videoId: string): Promise<number> {
+  const { data: overdue, error: loadErr } = await supabase
+    .from("work_blocks")
+    .select("id")
+    .eq("video_id", videoId)
+    .eq("status", "upcoming")
+    .lt("scheduled_end", new Date().toISOString());
+  if (loadErr) throw loadErr;
+
+  const ids = (overdue ?? []).map((block) => block.id);
+  if (ids.length === 0) return 0;
+
+  const { error: updateErr } = await supabase
+    .from("work_blocks")
+    .update({
+      status: "missed",
+      clock_in_at: null,
+      clock_out_at: null,
+      actual_minutes: 0,
+    })
+    .in("id", ids);
+  if (updateErr) throw updateErr;
+
+  const rebalanceResult = await applyRebalance(videoId);
+  if (!rebalanceResult.ok) throw new Error(rebalanceResult.error ?? "rebalance failed");
+  return ids.length;
 }
 
 export async function applyRebalance(videoId: string): Promise<{ ok: boolean; error?: string }> {
@@ -108,7 +171,7 @@ export async function applyRebalance(videoId: string): Promise<{ ok: boolean; er
   const assignments = rebalance(
     stages.map((s) => ({
       id: s.id,
-      kind: s.kind as any,
+      kind: s.kind as StageKind,
       order_index: s.order_index,
       planned_blocks: Number(s.planned_blocks),
       actual_blocks: Number(s.actual_blocks),
@@ -118,12 +181,12 @@ export async function applyRebalance(videoId: string): Promise<{ ok: boolean; er
     blocks.map((b) => ({
       id: b.id,
       day_of_week: b.day_of_week,
-      slot: b.slot as any,
+      slot: b.slot as Slot,
       scheduled_start: b.scheduled_start,
       assigned_stage_id: b.assigned_stage_id,
       assigned_portion: Number(b.assigned_portion),
       status: b.status,
-    }))
+    })),
   );
 
   const results = await Promise.all(
@@ -131,8 +194,8 @@ export async function applyRebalance(videoId: string): Promise<{ ok: boolean; er
       supabase
         .from("work_blocks")
         .update({ assigned_stage_id: a.stageId, assigned_portion: a.portion })
-        .eq("id", a.blockId)
-    )
+        .eq("id", a.blockId),
+    ),
   );
   const firstErr = results.find((r) => r.error)?.error;
   if (firstErr) return { ok: false, error: firstErr.message };

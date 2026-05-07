@@ -32,12 +32,12 @@ export const STAGE_LABEL: Record<StageKind, string> = {
 
 export const STAGE_DEFAULTS: Record<StageKind, { default: number; min: number; max: number }> = {
   research: { default: 2, min: 1, max: 3 },
-  scripting: { default: 3.5, min: 2, max: 5 },
-  recording: { default: 1, min: 0.5, max: 2 },
-  cleanup: { default: 3.5, min: 2, max: 5 },
-  layout: { default: 2.5, min: 2, max: 3 },
-  editing: { default: 2.5, min: 2, max: 3 },
-  finishing: { default: 1.5, min: 1, max: 3 },
+  scripting: { default: 3, min: 2, max: 5 },
+  recording: { default: 1.5, min: 0.5, max: 2 },
+  cleanup: { default: 2, min: 1, max: 4 },
+  layout: { default: 3, min: 2, max: 4 },
+  editing: { default: 3, min: 2, max: 4 },
+  finishing: { default: 1, min: 1, max: 3 },
 };
 
 export type Slot = "AM" | "PM" | "EVE";
@@ -55,10 +55,31 @@ export interface BlockTemplate {
 export const WEEK_TEMPLATE: BlockTemplate[] = (() => {
   const out: BlockTemplate[] = [];
   for (let d = 1; d <= 6; d++) {
-    out.push({ day_of_week: d, slot: "AM", startHour: 9, startMinute: 0, endHour: 12, endMinute: 30 });
-    out.push({ day_of_week: d, slot: "PM", startHour: 14, startMinute: 30, endHour: 18, endMinute: 0 });
+    out.push({
+      day_of_week: d,
+      slot: "AM",
+      startHour: 9,
+      startMinute: 0,
+      endHour: 12,
+      endMinute: 30,
+    });
+    out.push({
+      day_of_week: d,
+      slot: "PM",
+      startHour: 14,
+      startMinute: 30,
+      endHour: 18,
+      endMinute: 0,
+    });
     if (d === 2 || d === 4 || d === 5 || d === 6) {
-      out.push({ day_of_week: d, slot: "EVE", startHour: 20, startMinute: 0, endHour: 23, endMinute: 30 });
+      out.push({
+        day_of_week: d,
+        slot: "EVE",
+        startHour: 20,
+        startMinute: 0,
+        endHour: 23,
+        endMinute: 30,
+      });
     }
   }
   return out;
@@ -92,7 +113,7 @@ export function dateToISODate(d: Date): string {
 
 export function buildBlockTimestamps(
   weekStart: Date,
-  tpl: BlockTemplate
+  tpl: BlockTemplate,
 ): { start: Date; end: Date } {
   const start = addDays(weekStart, tpl.day_of_week - 1);
   start.setHours(tpl.startHour, tpl.startMinute, 0, 0);
@@ -127,18 +148,19 @@ export interface RebalanceAssignment {
   portion: number;
 }
 
+export function isClosedBlockStatus(status: string): boolean {
+  return status === "done" || status === "partial" || status === "missed" || status === "skipped";
+}
+
 /**
  * Computes new stage assignments for upcoming blocks.
- * - Done blocks keep their existing assignment.
+ * - Closed blocks keep their existing assignment.
  * - Remaining work for each stage = max(0, planned - actual) using stage order.
  * - Each upcoming block gets one stage (portion=1) in order; final block of a stage may have <1.
  *   For UI simplicity we assign whole blocks per stage and ignore fractional remainder
  *   (rounded up so we don't underplan).
  */
-export function rebalance(
-  stages: StageInput[],
-  blocks: BlockInput[]
-): RebalanceAssignment[] {
+export function rebalance(stages: StageInput[], blocks: BlockInput[]): RebalanceAssignment[] {
   const ordered = [...stages].sort((a, b) => a.order_index - b.order_index);
   // Remaining blocks per stage (round up to whole blocks)
   const remaining = new Map<string, number>();
@@ -148,7 +170,7 @@ export function rebalance(
   }
 
   const upcoming = blocks
-    .filter((b) => b.status !== "done" && b.status !== "skipped")
+    .filter((b) => !isClosedBlockStatus(b.status))
     .sort((a, b) => a.scheduled_start.localeCompare(b.scheduled_start));
 
   const assignments: RebalanceAssignment[] = [];
@@ -175,10 +197,13 @@ export function totalRemainingBlocks(stages: StageInput[]): number {
 }
 
 export function upcomingBlockCount(blocks: BlockInput[]): number {
-  return blocks.filter((b) => b.status !== "done" && b.status !== "skipped").length;
+  return blocks.filter((b) => !isClosedBlockStatus(b.status)).length;
 }
 
-export function deliveryStatus(stages: StageInput[], blocks: BlockInput[]): {
+export function deliveryStatus(
+  stages: StageInput[],
+  blocks: BlockInput[],
+): {
   state: "ahead" | "ontrack" | "behind" | "atrisk";
   diffBlocks: number; // negative = behind, positive = ahead
 } {
