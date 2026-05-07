@@ -47,6 +47,18 @@ function markOverdueMissed(blocks: WorkBlockRow[]) {
   });
 }
 
+function normalizeBlockDefaults(block: WorkBlockRow): WorkBlockRow {
+  return {
+    ...block,
+    is_catch_up: Boolean(block.is_catch_up),
+    planned_break_minutes:
+      typeof block.planned_break_minutes === "number" ? block.planned_break_minutes : 15,
+    pause_count: typeof block.pause_count === "number" ? block.pause_count : 0,
+    pause_minutes: typeof block.pause_minutes === "number" ? block.pause_minutes : 0,
+    task_snapshot: block.task_snapshot ?? null,
+  };
+}
+
 function createLocalWeekFor(monday: Date): VideoBundle {
   const weekStart = dateToISODate(monday);
   const videoId = `local-video-${weekStart}`;
@@ -93,6 +105,11 @@ function createLocalWeekFor(monday: Date): VideoBundle {
       actual_minutes: 0,
       status: "upcoming",
       notes: null,
+      is_catch_up: false,
+      planned_break_minutes: 15,
+      pause_count: 0,
+      pause_minutes: 0,
+      task_snapshot: null,
       created_at: createdAt,
       updated_at: createdAt,
     };
@@ -103,10 +120,10 @@ function createLocalWeekFor(monday: Date): VideoBundle {
 
 function normalizeBundle(bundle: VideoBundle): VideoBundle {
   const stages = applyDefaultStagePlan(bundle.stages);
-  const overdueMarkedBlocks = markOverdueMissed(bundle.blocks);
+  const overdueMarkedBlocks = markOverdueMissed(bundle.blocks.map(normalizeBlockDefaults));
   const assignments = rebalance(stages, overdueMarkedBlocks);
   const blocks = overdueMarkedBlocks.map((block) => {
-    if (isClosedBlockStatus(block.status)) return block;
+    if (isClosedBlockStatus(block.status) || block.is_catch_up) return block;
     const assignment = assignments.find((item) => item.blockId === block.id);
     if (!assignment) return block;
     return {
@@ -195,7 +212,7 @@ function saveBundle(bundle: VideoBundle) {
 function rebalanceLocalBundle(bundle: VideoBundle): VideoBundle {
   const assignments = rebalance(bundle.stages, bundle.blocks);
   const blocks = bundle.blocks.map((block) => {
-    if (isClosedBlockStatus(block.status)) return block;
+    if (isClosedBlockStatus(block.status) || block.is_catch_up) return block;
     const assignment = assignments.find((a) => a.blockId === block.id);
     if (!assignment) return block;
     return {

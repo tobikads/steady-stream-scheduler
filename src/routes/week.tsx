@@ -1,4 +1,5 @@
 import { AppShell } from "@/components/AppShell";
+import { CloudSyncNotice } from "@/components/CloudSyncNotice";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCurrentWeek } from "@/hooks/use-current-week";
 import { Card } from "@/components/ui/card";
@@ -94,7 +95,7 @@ function daySummary(blocks: WorkBlockRow[], now: Date) {
 }
 
 function WeekPageInner() {
-  const { data, loading, error, cloudError, refresh } = useCurrentWeek();
+  const { data, loading, error, mode, cloudError, refresh } = useCurrentWeek();
   if (loading) return <div className="p-8 text-muted-foreground">Loading…</div>;
   if (error || !data) {
     return (
@@ -159,10 +160,8 @@ function WeekPageInner() {
         </p>
       </div>
 
-      {cloudError && (
-        <Card className="p-4 border-amber-500/30 bg-amber-500/10 text-sm text-amber-800">
-          Cloud sync is unavailable, so this week is showing local data. {cloudError}
-        </Card>
+      {(mode === "local" || cloudError) && (
+        <CloudSyncNotice message={cloudError} onRetry={refresh} showSignIn={!cloudError} />
       )}
 
       {/* Overall progress */}

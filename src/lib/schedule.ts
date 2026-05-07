@@ -140,6 +140,7 @@ export interface BlockInput {
   assigned_stage_id: string | null;
   assigned_portion: number;
   status: string;
+  is_catch_up?: boolean;
 }
 
 export interface RebalanceAssignment {
@@ -185,7 +186,7 @@ export function rebalance(stages: StageInput[], blocks: BlockInput[]): Rebalance
   }
 
   const upcoming = blocks
-    .filter((b) => !isClosedBlockStatus(b.status))
+    .filter((b) => !isClosedBlockStatus(b.status) && !b.is_catch_up)
     .sort((a, b) => a.scheduled_start.localeCompare(b.scheduled_start));
 
   const assignments: RebalanceAssignment[] = [];
