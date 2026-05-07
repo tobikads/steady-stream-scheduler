@@ -14,7 +14,7 @@ export const Route = createFileRoute("/history")({
   component: HistoryPage,
   head: () => ({
     meta: [
-      { title: "History - Cadence" },
+      { title: "History - YT Video Scheduler" },
       { name: "description", content: "Past weeks: planned vs actual per stage." },
     ],
   }),
