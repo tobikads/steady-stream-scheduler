@@ -52,7 +52,7 @@ function WeekPageInner() {
 
   const updateBlock = async (
     blockId: string,
-    patch: Record<string, any>,
+    patch: any,
     successMsg: string,
     rebalanceAfter = true
   ) => {
