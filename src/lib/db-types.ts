@@ -16,5 +16,11 @@ export type WorkBlockRow = Omit<Tables<"work_blocks">, "slot" | "status"> & {
 };
 
 export function getErrorMessage(error: unknown, fallback = "Something went wrong") {
-  return error instanceof Error ? error.message : fallback;
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  return fallback;
 }
