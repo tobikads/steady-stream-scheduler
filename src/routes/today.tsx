@@ -878,7 +878,7 @@ function TimerPanel({
     );
   }
 
-  const ringPct = Math.min(100, (elapsed / WORK_MS) * 100);
+  const ringPct = Math.min(100, (workRemaining / WORK_MS) * 100);
   return (
     <Card className="p-8 flex flex-col items-center text-center gap-4">
       <div className="text-xs uppercase tracking-wider text-muted-foreground">Working on</div>
