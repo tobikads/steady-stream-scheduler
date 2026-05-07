@@ -14,7 +14,199 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      daily_logs: {
+        Row: {
+          blocks_completed: number
+          created_at: string
+          id: string
+          log_date: string
+          notes: string | null
+          user_id: string
+          video_id: string
+        }
+        Insert: {
+          blocks_completed?: number
+          created_at?: string
+          id?: string
+          log_date: string
+          notes?: string | null
+          user_id: string
+          video_id: string
+        }
+        Update: {
+          blocks_completed?: number
+          created_at?: string
+          id?: string
+          log_date?: string
+          notes?: string | null
+          user_id?: string
+          video_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "daily_logs_video_id_fkey"
+            columns: ["video_id"]
+            isOneToOne: false
+            referencedRelation: "videos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      stages: {
+        Row: {
+          actual_blocks: number
+          completed: boolean
+          created_at: string
+          id: string
+          kind: string
+          order_index: number
+          percent_complete: number
+          planned_blocks: number
+          updated_at: string
+          user_id: string
+          video_id: string
+        }
+        Insert: {
+          actual_blocks?: number
+          completed?: boolean
+          created_at?: string
+          id?: string
+          kind: string
+          order_index: number
+          percent_complete?: number
+          planned_blocks: number
+          updated_at?: string
+          user_id: string
+          video_id: string
+        }
+        Update: {
+          actual_blocks?: number
+          completed?: boolean
+          created_at?: string
+          id?: string
+          kind?: string
+          order_index?: number
+          percent_complete?: number
+          planned_blocks?: number
+          updated_at?: string
+          user_id?: string
+          video_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "stages_video_id_fkey"
+            columns: ["video_id"]
+            isOneToOne: false
+            referencedRelation: "videos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      videos: {
+        Row: {
+          created_at: string
+          id: string
+          release_date: string
+          status: string
+          title: string
+          updated_at: string
+          user_id: string
+          week_start: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          release_date: string
+          status?: string
+          title?: string
+          updated_at?: string
+          user_id: string
+          week_start: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          release_date?: string
+          status?: string
+          title?: string
+          updated_at?: string
+          user_id?: string
+          week_start?: string
+        }
+        Relationships: []
+      }
+      work_blocks: {
+        Row: {
+          actual_minutes: number
+          assigned_portion: number
+          assigned_stage_id: string | null
+          clock_in_at: string | null
+          clock_out_at: string | null
+          created_at: string
+          day_of_week: number
+          id: string
+          notes: string | null
+          scheduled_end: string
+          scheduled_start: string
+          slot: string
+          status: string
+          updated_at: string
+          user_id: string
+          video_id: string
+        }
+        Insert: {
+          actual_minutes?: number
+          assigned_portion?: number
+          assigned_stage_id?: string | null
+          clock_in_at?: string | null
+          clock_out_at?: string | null
+          created_at?: string
+          day_of_week: number
+          id?: string
+          notes?: string | null
+          scheduled_end: string
+          scheduled_start: string
+          slot: string
+          status?: string
+          updated_at?: string
+          user_id: string
+          video_id: string
+        }
+        Update: {
+          actual_minutes?: number
+          assigned_portion?: number
+          assigned_stage_id?: string | null
+          clock_in_at?: string | null
+          clock_out_at?: string | null
+          created_at?: string
+          day_of_week?: number
+          id?: string
+          notes?: string | null
+          scheduled_end?: string
+          scheduled_start?: string
+          slot?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+          video_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "work_blocks_assigned_stage_id_fkey"
+            columns: ["assigned_stage_id"]
+            isOneToOne: false
+            referencedRelation: "stages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "work_blocks_video_id_fkey"
+            columns: ["video_id"]
+            isOneToOne: false
+            referencedRelation: "videos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
