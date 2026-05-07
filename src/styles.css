@@ -144,5 +144,18 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    background-image:
+      radial-gradient(ellipse 80% 60% at 20% 0%, oklch(0.72 0.17 245 / 0.18), transparent 60%),
+      radial-gradient(ellipse 70% 50% at 100% 100%, oklch(0.55 0.2 280 / 0.15), transparent 60%);
+    background-attachment: fixed;
   }
 }
+
+@keyframes timer-pulse {
+  0%, 100% { filter: drop-shadow(0 0 8px oklch(0.72 0.17 245 / 0.6)); }
+  50% { filter: drop-shadow(0 0 20px oklch(0.72 0.17 245 / 0.9)); }
+}
+@keyframes timer-spin {
+  to { transform: rotate(360deg); }
+}
+.timer-glow { animation: timer-pulse 2.5s ease-in-out infinite; }
