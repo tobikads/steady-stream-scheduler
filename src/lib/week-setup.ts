@@ -10,24 +10,9 @@ import {
   rebalance,
 } from "./schedule";
 
-/**
- * Ensures the current week's video, stages, and 16 work blocks exist for the user.
- * Returns the video id.
- */
-export async function ensureCurrentWeek(userId: string): Promise<string> {
-  const monday = getMondayOf(new Date());
+async function seedWeek(userId: string, monday: Date): Promise<string> {
   const weekStart = dateToISODate(monday);
-
-  const { data: existing } = await supabase
-    .from("videos")
-    .select("id")
-    .eq("user_id", userId)
-    .eq("week_start", weekStart)
-    .maybeSingle();
-
-  if (existing) return existing.id;
-
-  const release = dateToISODate(addDays(monday, 5)); // Saturday
+  const release = dateToISODate(addDays(monday, 5));
 
   const { data: video, error: vErr } = await supabase
     .from("videos")
@@ -41,7 +26,6 @@ export async function ensureCurrentWeek(userId: string): Promise<string> {
     .single();
   if (vErr || !video) throw vErr ?? new Error("video insert failed");
 
-  // Insert stages
   const stagesPayload = STAGE_ORDER.map((kind, i) => ({
     video_id: video.id,
     user_id: userId,
@@ -49,13 +33,9 @@ export async function ensureCurrentWeek(userId: string): Promise<string> {
     order_index: i,
     planned_blocks: STAGE_DEFAULTS[kind].default,
   }));
-  const { data: stages, error: sErr } = await supabase
-    .from("stages")
-    .insert(stagesPayload)
-    .select("*");
-  if (sErr || !stages) throw sErr ?? new Error("stages insert failed");
+  const { error: sErr } = await supabase.from("stages").insert(stagesPayload);
+  if (sErr) throw sErr;
 
-  // Insert 16 work blocks
   const blocksPayload = WEEK_TEMPLATE.map((tpl) => {
     const { start, end } = buildBlockTimestamps(monday, tpl);
     return {
@@ -67,24 +47,63 @@ export async function ensureCurrentWeek(userId: string): Promise<string> {
       scheduled_end: end.toISOString(),
     };
   });
-  const { data: blocks, error: bErr } = await supabase
-    .from("work_blocks")
-    .insert(blocksPayload)
-    .select("*");
-  if (bErr || !blocks) throw bErr ?? new Error("blocks insert failed");
+  const { error: bErr } = await supabase.from("work_blocks").insert(blocksPayload);
+  if (bErr) throw bErr;
 
-  // Initial assignment via rebalance
   await applyRebalance(video.id);
-
   return video.id;
 }
 
-export async function applyRebalance(videoId: string) {
-  const [{ data: stages }, { data: blocks }] = await Promise.all([
+export async function ensureCurrentWeek(userId: string): Promise<string> {
+  const monday = getMondayOf(new Date());
+  const weekStart = dateToISODate(monday);
+
+  const { data: existing } = await supabase
+    .from("videos")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("week_start", weekStart)
+    .maybeSingle();
+
+  if (existing) {
+    // Self-heal: if blocks exist but none are assigned, run rebalance.
+    const { data: anyAssigned } = await supabase
+      .from("work_blocks")
+      .select("id")
+      .eq("video_id", existing.id)
+      .not("assigned_stage_id", "is", null)
+      .limit(1);
+    if (!anyAssigned || anyAssigned.length === 0) {
+      await applyRebalance(existing.id);
+    }
+    return existing.id;
+  }
+
+  return seedWeek(userId, monday);
+}
+
+export async function createNextWeek(userId: string): Promise<string> {
+  const thisMonday = getMondayOf(new Date());
+  const nextMonday = addDays(thisMonday, 7);
+  const weekStart = dateToISODate(nextMonday);
+  const { data: existing } = await supabase
+    .from("videos")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("week_start", weekStart)
+    .maybeSingle();
+  if (existing) return existing.id;
+  return seedWeek(userId, nextMonday);
+}
+
+export async function applyRebalance(videoId: string): Promise<{ ok: boolean; error?: string }> {
+  const [{ data: stages, error: sErr }, { data: blocks, error: bErr }] = await Promise.all([
     supabase.from("stages").select("*").eq("video_id", videoId),
     supabase.from("work_blocks").select("*").eq("video_id", videoId),
   ]);
-  if (!stages || !blocks) return;
+  if (sErr || bErr || !stages || !blocks) {
+    return { ok: false, error: sErr?.message ?? bErr?.message ?? "load failed" };
+  }
 
   const assignments = rebalance(
     stages.map((s) => ({
@@ -107,8 +126,7 @@ export async function applyRebalance(videoId: string) {
     }))
   );
 
-  // Batch updates (one round trip per block; small N=16 max)
-  await Promise.all(
+  const results = await Promise.all(
     assignments.map((a) =>
       supabase
         .from("work_blocks")
@@ -116,4 +134,7 @@ export async function applyRebalance(videoId: string) {
         .eq("id", a.blockId)
     )
   );
+  const firstErr = results.find((r) => r.error)?.error;
+  if (firstErr) return { ok: false, error: firstErr.message };
+  return { ok: true };
 }

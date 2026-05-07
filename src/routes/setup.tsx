@@ -44,15 +44,30 @@ function SetupPageInner() {
   const save = async () => {
     setSaving(true);
     try {
-      await supabase.from("videos").update({ title }).eq("id", data.videoId);
-      await Promise.all(
+      const { error: vErr } = await supabase.from("videos").update({ title }).eq("id", data.videoId);
+      if (vErr) {
+        toast.error(`Title save failed: ${vErr.message}`);
+        return;
+      }
+      const results = await Promise.all(
         Object.entries(drafts).map(([id, val]) =>
           supabase.from("stages").update({ planned_blocks: val }).eq("id", id)
         )
       );
-      await applyRebalance(data.videoId);
+      const sErr = results.find((r) => r.error)?.error;
+      if (sErr) {
+        toast.error(`Stage save failed: ${sErr.message}`);
+        return;
+      }
+      const r = await applyRebalance(data.videoId);
+      if (!r.ok) {
+        toast.error(`Rebalance failed: ${r.error}`);
+        return;
+      }
       toast.success("Saved and rebalanced.");
       refresh();
+    } catch (e: any) {
+      toast.error(e?.message ?? "Save failed");
     } finally {
       setSaving(false);
     }

@@ -1,77 +1,42 @@
+## What's broken & what's missing
 
-# Weekly Video Production Planner
+After reviewing the code, here's what I found and how I'll fix it:
 
-A single-user web app that turns your weekly video into a living schedule. You log what you actually do each day, and the plan rebalances itself so you still ship on Saturday.
+### Bugs
+1. **Clock-in does nothing visible** — the click likely succeeds against the database but there's no error surfacing if it fails (e.g. RLS, stale session). I'll add error toasts on every Supabase write so silent failures stop being silent, and refresh state after every mutation.
+2. **Save & rebalance does nothing visible** — same root cause. The `.update()` calls don't check `error`, so a failure shows nothing. I'll also force a refresh and a clear "Saved" toast only when the writes actually succeed.
+3. **Video title not editable from Today** — currently you have to go to /setup. I'll add an inline editable title at the top of the Today page.
 
-## Your fixed weekly capacity (baked in, not optional)
+### Interactivity upgrades
+4. **Week tab is static** — I'll make each block clickable: shows status (upcoming / in progress / done / skipped), lets you clock in or mark a block done/skipped from the week view, and visually flags today's blocks.
+5. **Today page polish** — show a "next block starts in…" countdown, surface the active stage progress at the top, and make the clock-out flow inline instead of a modal.
+6. **History tab** — add a per-stage efficiency view (avg actual vs planned across all videos) so you can see which stages you consistently under/over-estimate. Also add a "create next week's video" button so you're not stuck waiting.
 
-Every day has 2 video work blocks: **9:00–12:30** and **2:30–6:00**.
-Tue, Thu, Fri, Sat also have a third evening block: **8:00–11:30 PM**.
+### Plan in detail
 
-| Day | Blocks | Total |
-|-----|--------|-------|
-| Mon | AM, PM | 2 |
-| Tue | AM, PM, Eve | 3 |
-| Wed | AM, PM | 2 |
-| Thu | AM, PM, Eve | 3 |
-| Fri | AM, PM, Eve | 3 |
-| Sat | AM, PM, Eve | 3 |
-| **Week total** | | **16 blocks** |
+**Files to change**
 
-This comfortably covers the full ~16.5-block production process. No "stretch / maybe" blocks — these slots are scheduled work and the planner treats them as committed.
+- `src/routes/today.tsx`
+  - Inline editable video title (click to edit, save on blur)
+  - Wrap every Supabase call in try/catch with toast.error on failure
+  - Show "Next block: 2:30 PM (in 1h 14m)" when no block is active
+  - Replace clock-out modal with an inline expanding panel under the active block
+- `src/routes/week.tsx`
+  - Each block becomes interactive: badge for status, clock-in button if today, "mark done"/"skip" menu
+  - Highlight today's column
+  - Show stage progress chip per block
+- `src/routes/setup.tsx`
+  - Surface errors on save; toast only fires after writes confirm; refresh data after rebalance
+- `src/routes/history.tsx`
+  - Add "Estimation accuracy" card: per-stage avg actual/planned ratio across videos
+  - Add "Start next week" button that creates the next Monday's video
+- `src/lib/week-setup.ts`
+  - Add `createNextWeek(userId)` helper that mirrors `ensureCurrentWeek` for a given Monday
+  - Make `applyRebalance` return a success/error so callers can surface it
 
-## Stages with default block estimates (editable per video)
+**No schema changes** — all the data we need is already in the tables; this is a UX & wiring fix.
 
-- Research: 2 (range 1–3)
-- Scripting: 3.5
-- Recording: 1
-- Cleaning up video: 3.5
-- Laying out clips: 2.5 (range 2–3)
-- Editing: 2.5 (range 2–3)
-- Finishing touches: 1.5
-- **Default total: 16.5 blocks** → fits the 16-block week when Research lands at 1.5 or you carry 0.5 block into Saturday evening. Planner shows the math live as you adjust.
-
-## How the system stays dynamic
-
-1. **Start of week (Mon AM)**: confirm/adjust this video's stage estimates. Planner lays them onto the 16 fixed blocks Mon→Sat in production order.
-2. **Each block**: clock in → work → clock out. Hourly 15-min break reminders. The block's actual minutes and stage progress are recorded.
-3. **End of each block + end of day**: mark stage % complete and confirm. Planner immediately:
-   - **Behind**: redistributes leftover work onto the remaining scheduled blocks. Flags exactly which upcoming blocks now have more on them and whether Saturday delivery is still safe.
-   - **Ahead**: pulls future work earlier and shows you the free time you've earned (you can choose to bank it, end early, or get a head start on next week's research).
-4. **Risk warnings**: if at any check-in Saturday delivery is at risk even with all 16 blocks used, you get a clear alert with options — trim a stage's scope, or accept the slip.
-
-## Main screens
-
-### 1. Today
-- The day's scheduled blocks listed by clock time, each tagged with its stage assignment.
-- Big **Clock In / Clock Out** button for the active block, with a live timer and break reminders.
-- Quick-log: "Finished X", "Got Y% through Z" — recomputes the week instantly.
-- End-of-day summary: blocks done vs. planned, % per stage, what's on tomorrow.
-
-### 2. Week view
-- Mon–Sat grid showing every block (AM, PM, Eve where applicable) with its assigned stage and status (done / in progress / upcoming).
-- Top status bar: "On track / Ahead by X blocks / Behind by Y blocks — Saturday delivery [safe / at risk]".
-- Saturday is the fixed release deadline with a countdown.
-
-### 3. Video setup
-- Sliders for each stage's block estimate (within their min–max).
-- Live read-out of total blocks vs. 16 available, plus projected finish block.
-
-### 4. History
-- Past weeks: planned vs. actual per stage. Helps you tune your own estimates over time (e.g. "you average 3 blocks for editing, not 2.5").
-
-## Tech approach
-
-- **Frontend**: TanStack Start routes (`/`, `/week`, `/setup`, `/history`), React + Tailwind, shadcn/ui components.
-- **Persistence**: Lovable Cloud (Postgres + auth) so data syncs across devices and history accrues. Tables: `videos` (one per week), `stages` (per video with planned/actual blocks), `blocks` (the 16 weekly slots with assigned stage and clock-in/out timestamps), `daily_logs`.
-- **Schedule template**: the Mon–Sat block layout above is a fixed weekly template seeded for every new week — it isn't asked for each time.
-- **Rebalancing logic**: pure TypeScript `rebalance(video, now)` function. Recomputes remaining blocks per stage and reassigns them to remaining slots in production order. Runs after every clock-out and check-in.
-- **Notifications**: in-app toasts for break time, end-of-block, end-of-day check-in. (No push/email in v1.)
-- **Design**: focused, calm, dark-mode friendly. Big timer numerals, clear progress bars per stage. Feels like a coach, not a spreadsheet.
-
-## Not in v1
-
-- Multi-user / team features
-- Google/Apple Calendar sync
-- Native mobile app (responsive web only)
-- AI suggestions — rebalancing is deterministic on purpose
+### Out of scope (ask if you want them)
+- Drag-and-drop reassignment of blocks to stages
+- Notifications outside the app (email/push when behind schedule)
+- Multi-video pipeline (working on next week's research while finishing this week's edit)
