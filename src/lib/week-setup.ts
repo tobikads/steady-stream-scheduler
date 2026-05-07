@@ -192,6 +192,7 @@ export async function applyRebalance(videoId: string): Promise<{ ok: boolean; er
       assigned_stage_id: b.assigned_stage_id,
       assigned_portion: Number(b.assigned_portion),
       status: b.status,
+      is_catch_up: Boolean(b.is_catch_up),
     })),
   );
 

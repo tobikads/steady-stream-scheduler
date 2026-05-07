@@ -2,10 +2,10 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { CalendarRange, History, LayoutDashboard, LogIn, LogOut } from "lucide-react";
+import { CalendarRange, History, LayoutDashboard, LifeBuoy, LogIn, LogOut } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 
-type NavPath = "/today" | "/week" | "/history";
+type NavPath = "/today" | "/week" | "/catch-up" | "/history";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
@@ -41,6 +41,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <nav className="flex items-center gap-1 text-sm">
             <NavItem to="/today" icon={<LayoutDashboard className="size-4" />} label="Today" />
             <NavItem to="/week" icon={<CalendarRange className="size-4" />} label="Week" />
+            <NavItem to="/catch-up" icon={<LifeBuoy className="size-4" />} label="Catch Up" />
             <NavItem to="/history" icon={<History className="size-4" />} label="History" />
           </nav>
           <div className="flex items-center gap-2">

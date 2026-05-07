@@ -13,6 +13,7 @@ import { Route as WeekRouteImport } from './routes/week'
 import { Route as TodayRouteImport } from './routes/today'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as HistoryRouteImport } from './routes/history'
+import { Route as CatchUpRouteImport } from './routes/catch-up'
 import { Route as IndexRouteImport } from './routes/index'
 
 const WeekRoute = WeekRouteImport.update({
@@ -35,6 +36,11 @@ const HistoryRoute = HistoryRouteImport.update({
   path: '/history',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CatchUpRoute = CatchUpRouteImport.update({
+  id: '/catch-up',
+  path: '/catch-up',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -43,6 +49,7 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/catch-up': typeof CatchUpRoute
   '/history': typeof HistoryRoute
   '/login': typeof LoginRoute
   '/today': typeof TodayRoute
@@ -50,6 +57,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/catch-up': typeof CatchUpRoute
   '/history': typeof HistoryRoute
   '/login': typeof LoginRoute
   '/today': typeof TodayRoute
@@ -58,6 +66,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/catch-up': typeof CatchUpRoute
   '/history': typeof HistoryRoute
   '/login': typeof LoginRoute
   '/today': typeof TodayRoute
@@ -65,14 +74,22 @@ export interface FileRoutesById {
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/history' | '/login' | '/today' | '/week'
+  fullPaths: '/' | '/catch-up' | '/history' | '/login' | '/today' | '/week'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/history' | '/login' | '/today' | '/week'
-  id: '__root__' | '/' | '/history' | '/login' | '/today' | '/week'
+  to: '/' | '/catch-up' | '/history' | '/login' | '/today' | '/week'
+  id:
+    | '__root__'
+    | '/'
+    | '/catch-up'
+    | '/history'
+    | '/login'
+    | '/today'
+    | '/week'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  CatchUpRoute: typeof CatchUpRoute
   HistoryRoute: typeof HistoryRoute
   LoginRoute: typeof LoginRoute
   TodayRoute: typeof TodayRoute
@@ -109,6 +126,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof HistoryRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/catch-up': {
+      id: '/catch-up'
+      path: '/catch-up'
+      fullPath: '/catch-up'
+      preLoaderRoute: typeof CatchUpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -121,6 +145,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  CatchUpRoute: CatchUpRoute,
   HistoryRoute: HistoryRoute,
   LoginRoute: LoginRoute,
   TodayRoute: TodayRoute,
@@ -129,3 +154,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

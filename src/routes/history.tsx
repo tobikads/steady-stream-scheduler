@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { STAGE_LABEL, STAGE_ORDER, dateToISODate, getMondayOf } from "@/lib/schedule";
-import type { StageRow, VideoRow } from "@/lib/db-types";
+import type { StageRow, VideoRow, WorkBlockRow } from "@/lib/db-types";
 import { getErrorMessage } from "@/lib/db-types";
 import { loadLocalWeeks } from "@/lib/local-week";
 
@@ -24,6 +24,7 @@ export const Route = createFileRoute("/history")({
 type HistoryWeek = {
   video: VideoRow;
   stages: StageRow[];
+  blocks: WorkBlockRow[];
 };
 
 function dateLabel(isoDate: string) {
@@ -54,6 +55,7 @@ function localHistoryWeeks(): HistoryWeek[] {
   return loadLocalWeeks().map((week) => ({
     video: week.video,
     stages: week.stages,
+    blocks: week.blocks,
   }));
 }
 
@@ -72,6 +74,7 @@ function mergeHistoryWeeks(cloudWeeks: HistoryWeek[], localWeeks: HistoryWeek[])
 function HistoryPageInner() {
   const [videos, setVideos] = useState<VideoRow[]>([]);
   const [stagesByVideo, setStagesByVideo] = useState<Record<string, StageRow[]>>({});
+  const [blocksByVideo, setBlocksByVideo] = useState<Record<string, WorkBlockRow[]>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<"supabase" | "local">("supabase");
@@ -88,6 +91,12 @@ function HistoryPageInner() {
         Object.fromEntries(weeks.map((week) => [week.video.id, week.stages])) as Record<
           string,
           StageRow[]
+        >,
+      );
+      setBlocksByVideo(
+        Object.fromEntries(weeks.map((week) => [week.video.id, week.blocks])) as Record<
+          string,
+          WorkBlockRow[]
         >,
       );
       setMode(nextMode);
@@ -117,23 +126,28 @@ function HistoryPageInner() {
 
         const cloudVideos = dedupeVideoRows((vids ?? []) as VideoRow[]);
         const grouped: Record<string, StageRow[]> = {};
+        const blockGroups: Record<string, WorkBlockRow[]> = {};
         if (cloudVideos.length > 0) {
-          const { data: stages, error: stagesErr } = await supabase
-            .from("stages")
-            .select("*")
-            .in(
-              "video_id",
-              cloudVideos.map((video) => video.id),
-            );
+          const videoIds = cloudVideos.map((video) => video.id);
+          const [{ data: stages, error: stagesErr }, { data: blocks, error: blocksErr }] =
+            await Promise.all([
+              supabase.from("stages").select("*").in("video_id", videoIds),
+              supabase.from("work_blocks").select("*").in("video_id", videoIds),
+            ]);
           if (stagesErr) throw stagesErr;
+          if (blocksErr) throw blocksErr;
           for (const stage of (stages ?? []) as StageRow[]) {
             (grouped[stage.video_id] ??= []).push(stage);
+          }
+          for (const block of (blocks ?? []) as WorkBlockRow[]) {
+            (blockGroups[block.video_id] ??= []).push(block);
           }
         }
 
         const cloudWeeks = cloudVideos.map((video) => ({
           video,
           stages: grouped[video.id] ?? [],
+          blocks: blockGroups[video.id] ?? [],
         }));
         applyWeeks(mergeHistoryWeeks(cloudWeeks, localWeeks), "supabase");
       } catch (err) {
@@ -233,11 +247,12 @@ function HistoryPageInner() {
           const stages = (stagesByVideo[video.id] ?? []).sort(
             (a, b) => a.order_index - b.order_index,
           );
+          const blocks = blocksByVideo[video.id] ?? [];
           const planned = stages.reduce((sum, stage) => sum + Number(stage.planned_blocks), 0);
           const actual = stages.reduce((sum, stage) => sum + Number(stage.actual_blocks), 0);
           const isCurrent = video.week_start === currentWeekStart;
           return (
-            <Card key={video.id} className="p-5">
+            <Card key={video.id} className="p-5" data-session-count={blocks.length}>
               <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">

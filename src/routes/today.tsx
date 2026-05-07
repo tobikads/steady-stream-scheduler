@@ -1,19 +1,22 @@
 import { AppShell } from "@/components/AppShell";
 import { CloudSyncNotice } from "@/components/CloudSyncNotice";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentWeek } from "@/hooks/use-current-week";
 import { applyRebalance } from "@/lib/week-setup";
 import { STAGE_LABEL } from "@/lib/schedule";
+import { blockDurationMinutes, plannedBreakMinutes } from "@/lib/catch-up";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   CheckCircle2,
   Circle,
   Coffee,
+  FileText,
   ListChecks,
   MoreHorizontal,
   Pause,
@@ -26,6 +29,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { StageRow, WorkBlockRow } from "@/lib/db-types";
+import type { Json } from "@/integrations/supabase/types";
 import {
   rebalanceLocalWeek,
   saveLocalTitle,
@@ -51,13 +55,97 @@ export const Route = createFileRoute("/today")({
 });
 
 const WORK_MS = 60 * 60 * 1000;
-const BREAK_MS = 15 * 60 * 1000;
-const COMPLETION_OPTIONS = [
-  { label: "25%", value: 0.25 },
-  { label: "50%", value: 0.5 },
-  { label: "75%", value: 0.75 },
-  { label: "100%", value: 1 },
-];
+const MAX_PAUSE_MS = 10 * 60 * 1000;
+const MAX_PAUSES_PER_BLOCK = 2;
+type TimerPhase = "work" | "break";
+
+interface StoredTimerSession {
+  version: 1;
+  blockId: string;
+  phase: TimerPhase;
+  workStartedAt: number;
+  breakStart: number | null;
+  pausedAt: number | null;
+  phasePausedMs: number;
+  sessionPausedMs: number;
+  completedWorkMs: number;
+  pauseCount: number;
+  chimedWork: boolean;
+  chimedBreak: boolean;
+  updatedAt: string;
+}
+type TimerSessionPayload = Omit<StoredTimerSession, "version" | "blockId" | "updatedAt">;
+
+interface BlockTaskSnapshot {
+  savedAt: string;
+  stageId: string | null;
+  stageLabel: string;
+  completed: Array<{ id: string; label: string; source: "stage" | "custom" }>;
+  tasks: Array<{ id: string; label: string; completed: boolean; source: "stage" | "custom" }>;
+}
+
+function timerStorageKey(videoId: string, blockId: string) {
+  return `cadence.timer.${videoId}.${blockId}`;
+}
+
+function canUseStorage() {
+  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+}
+
+function loadTimerSession(videoId: string, blockId: string): StoredTimerSession | null {
+  if (!canUseStorage()) return null;
+  const raw = localStorage.getItem(timerStorageKey(videoId, blockId));
+  if (!raw) return null;
+  try {
+    const session = JSON.parse(raw) as Partial<StoredTimerSession>;
+    if (
+      session.version !== 1 ||
+      session.blockId !== blockId ||
+      (session.phase !== "work" && session.phase !== "break") ||
+      typeof session.workStartedAt !== "number"
+    ) {
+      localStorage.removeItem(timerStorageKey(videoId, blockId));
+      return null;
+    }
+    return {
+      version: 1,
+      blockId,
+      phase: session.phase,
+      workStartedAt: session.workStartedAt,
+      breakStart: typeof session.breakStart === "number" ? session.breakStart : null,
+      pausedAt: typeof session.pausedAt === "number" ? session.pausedAt : null,
+      phasePausedMs: typeof session.phasePausedMs === "number" ? session.phasePausedMs : 0,
+      sessionPausedMs: typeof session.sessionPausedMs === "number" ? session.sessionPausedMs : 0,
+      completedWorkMs: typeof session.completedWorkMs === "number" ? session.completedWorkMs : 0,
+      pauseCount: typeof session.pauseCount === "number" ? session.pauseCount : 0,
+      chimedWork: Boolean(session.chimedWork),
+      chimedBreak: Boolean(session.chimedBreak),
+      updatedAt:
+        typeof session.updatedAt === "string" ? session.updatedAt : new Date().toISOString(),
+    };
+  } catch {
+    localStorage.removeItem(timerStorageKey(videoId, blockId));
+    return null;
+  }
+}
+
+function saveTimerSession(videoId: string, blockId: string, session: TimerSessionPayload) {
+  if (!canUseStorage()) return;
+  localStorage.setItem(
+    timerStorageKey(videoId, blockId),
+    JSON.stringify({
+      ...session,
+      version: 1,
+      blockId,
+      updatedAt: new Date().toISOString(),
+    }),
+  );
+}
+
+function clearTimerSession(videoId: string, blockId: string) {
+  if (!canUseStorage()) return;
+  localStorage.removeItem(timerStorageKey(videoId, blockId));
+}
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -84,6 +172,43 @@ function fmtClock(ms: number) {
   const m = Math.floor((s % 3600) / 60);
   const sec = s % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
+function fmtWorkDone(ms: number) {
+  const totalMin = Math.max(0, Math.floor(ms / 60000));
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function buildBlockTaskSnapshot(
+  stage: StageRow | null,
+  state: ProductivityState,
+): BlockTaskSnapshot {
+  const stageTasks = stage
+    ? (STAGE_CHECKLISTS[stage.kind] ?? []).map((item) => ({
+        id: item.id,
+        label: state.stageTaskLabelOverrides[stage.id]?.[item.id] ?? item.label,
+        completed: state.checkedStageItems[stage.id]?.[item.id] ?? false,
+        source: "stage" as const,
+      }))
+    : [];
+  const customTasks = state.tasks.map((task) => ({
+    id: task.id,
+    label: task.label,
+    completed: task.completed,
+    source: "custom" as const,
+  }));
+  const tasks = [...customTasks, ...stageTasks];
+  return {
+    savedAt: new Date().toISOString(),
+    stageId: stage?.id ?? null,
+    stageLabel: stage ? STAGE_LABEL[stage.kind] : "Video work",
+    completed: tasks
+      .filter((task) => task.completed)
+      .map((task) => ({ id: task.id, label: task.label, source: task.source })),
+    tasks,
+  };
 }
 
 function TodayPageInner() {
@@ -133,6 +258,7 @@ function TodayPageInner() {
   const focusStage = nextBlock
     ? data.stages.find((stage) => stage.id === nextBlock.assigned_stage_id)
     : null;
+  const taskSnapshot = buildBlockTaskSnapshot(focusStage ?? null, productivity.state);
 
   const saveTitle = async () => {
     if (cancelTitleRef.current) {
@@ -246,19 +372,23 @@ function TodayPageInner() {
         now={now}
         mode={mode}
         onPause={productivity.logPause}
+        taskSnapshot={taskSnapshot}
         onChanged={refresh}
       />
 
-      <TaskList
-        stage={focusStage ?? null}
-        state={productivity.state}
-        onToggleStageTask={productivity.toggleStageItem}
-        onAddTask={productivity.addTask}
-        onToggleTask={productivity.toggleTask}
-        onDeleteTask={productivity.deleteTask}
-        onRenameTask={productivity.renameTask}
-        onRenameStageTask={productivity.renameStageTask}
-      />
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)]">
+        <TaskList
+          stage={focusStage ?? null}
+          state={productivity.state}
+          onToggleStageTask={productivity.toggleStageItem}
+          onAddTask={productivity.addTask}
+          onToggleTask={productivity.toggleTask}
+          onDeleteTask={productivity.deleteTask}
+          onRenameTask={productivity.renameTask}
+          onRenameStageTask={productivity.renameStageTask}
+        />
+        <NotesPanel block={nextBlock ?? null} mode={mode} onChanged={refresh} />
+      </div>
     </div>
   );
 }
@@ -439,6 +569,85 @@ function TaskList({
   );
 }
 
+function NotesPanel({
+  block,
+  mode,
+  onChanged,
+}: {
+  block: WorkBlockRow | null;
+  mode: "supabase" | "local";
+  onChanged: () => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setDraft(block?.notes ?? "");
+  }, [block?.id, block?.notes]);
+
+  const savedNotes = block?.notes ?? "";
+  const dirty = draft !== savedNotes;
+
+  const saveNotes = async () => {
+    if (!block || !dirty) return;
+    const notes = draft.trim() || null;
+    if (mode === "local") {
+      updateLocalBlock(block.id, { notes });
+      toast.success("Notes saved locally.");
+      onChanged();
+      return;
+    }
+
+    setSaving(true);
+    const { error } = await supabase.from("work_blocks").update({ notes }).eq("id", block.id);
+    setSaving(false);
+    if (error) {
+      toast.error(`Notes failed to save: ${error.message}`);
+      return;
+    }
+    toast.success("Notes saved.");
+    onChanged();
+  };
+
+  return (
+    <Card className="p-5 space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <FileText className="size-5 text-primary" />
+          <h2 className="text-lg font-semibold">Notes</h2>
+        </div>
+        {block && (
+          <Badge variant="outline" className="text-[10px]">
+            {block.slot}
+          </Badge>
+        )}
+      </div>
+      <p className="text-sm text-muted-foreground">
+        Describe what happened during this block session.
+      </p>
+      <Textarea
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        placeholder={
+          block
+            ? "What went well, what got in the way, what should you remember?"
+            : "Clock in or choose a block to write notes."
+        }
+        disabled={!block || saving}
+        className="min-h-44 resize-y"
+      />
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs text-muted-foreground">
+          {dirty ? "Unsaved changes" : block ? "Saved" : "No block selected"}
+        </span>
+        <Button type="button" size="sm" onClick={saveNotes} disabled={!block || !dirty || saving}>
+          {saving ? "Saving..." : "Save notes"}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 function badgeMeta(status: string) {
   switch (status) {
     case "done":
@@ -469,6 +678,7 @@ function TimerPanel({
   now,
   mode,
   onPause,
+  taskSnapshot,
   onChanged,
 }: {
   block: WorkBlockRow | null;
@@ -482,22 +692,23 @@ function TimerPanel({
     reason: PauseReasonId;
     phase: "work" | "break";
   }) => void;
+  taskSnapshot: BlockTaskSnapshot;
   onChanged: () => void;
 }) {
   const stage = block ? stages.find((s) => s.id === block.assigned_stage_id) : null;
   const stageLabel = stage ? STAGE_LABEL[stage.kind] : "Unassigned";
   const isActive = block?.status === "in_progress";
 
-  // Phase: work | break
-  const [phase, setPhase] = useState<"work" | "break">("work");
+  const [phase, setPhase] = useState<TimerPhase>("work");
   const [workStartedAt, setWorkStartedAt] = useState<number | null>(null);
   const [breakStart, setBreakStart] = useState<number | null>(null);
   const [pausedAt, setPausedAt] = useState<number | null>(null);
   const [phasePausedMs, setPhasePausedMs] = useState(0);
   const [sessionPausedMs, setSessionPausedMs] = useState(0);
+  const [completedWorkMs, setCompletedWorkMs] = useState(0);
+  const [pauseCount, setPauseCount] = useState(0);
   const [choosingPauseReason, setChoosingPauseReason] = useState(false);
   const [wrapping, setWrapping] = useState(false);
-  const [completionPortion, setCompletionPortion] = useState(1);
   const [busy, setBusy] = useState(false);
   const chimedWorkRef = useRef(false);
   const chimedBreakRef = useRef(false);
@@ -510,34 +721,109 @@ function TimerPanel({
       setPausedAt(null);
       setPhasePausedMs(0);
       setSessionPausedMs(0);
+      setCompletedWorkMs(0);
+      setPauseCount(0);
       setChoosingPauseReason(false);
       setWrapping(false);
-      setCompletionPortion(1);
       chimedWorkRef.current = false;
       chimedBreakRef.current = false;
     } else if (block?.clock_in_at) {
-      setPhase("work");
-      setWorkStartedAt(new Date(block.clock_in_at).getTime());
-      setBreakStart(null);
-      setPausedAt(null);
-      setPhasePausedMs(0);
-      setSessionPausedMs(0);
+      const savedSession = loadTimerSession(videoId, block.id);
+      setPhase(savedSession?.phase ?? "work");
+      setWorkStartedAt(savedSession?.workStartedAt ?? new Date(block.clock_in_at).getTime());
+      setBreakStart(savedSession?.breakStart ?? null);
+      setPausedAt(savedSession?.pausedAt ?? null);
+      setPhasePausedMs(savedSession?.phasePausedMs ?? 0);
+      setSessionPausedMs(savedSession?.sessionPausedMs ?? 0);
+      setCompletedWorkMs(savedSession?.completedWorkMs ?? 0);
+      setPauseCount(savedSession?.pauseCount ?? block.pause_count ?? 0);
       setChoosingPauseReason(false);
       setWrapping(false);
-      setCompletionPortion(1);
-      chimedWorkRef.current = false;
-      chimedBreakRef.current = false;
+      chimedWorkRef.current = savedSession?.chimedWork ?? false;
+      chimedBreakRef.current = savedSession?.chimedBreak ?? false;
     }
-  }, [block?.id, block?.clock_in_at, isActive]);
+  }, [block?.id, block?.clock_in_at, block?.pause_count, isActive, videoId]);
+
+  useEffect(() => {
+    if (!isActive || !block?.id || !workStartedAt) return;
+    saveTimerSession(videoId, block.id, {
+      phase,
+      workStartedAt,
+      breakStart,
+      pausedAt,
+      phasePausedMs,
+      sessionPausedMs,
+      completedWorkMs,
+      pauseCount,
+      chimedWork: chimedWorkRef.current,
+      chimedBreak: chimedBreakRef.current,
+    });
+  }, [
+    block?.id,
+    breakStart,
+    isActive,
+    pausedAt,
+    phase,
+    phasePausedMs,
+    sessionPausedMs,
+    completedWorkMs,
+    pauseCount,
+    videoId,
+    workStartedAt,
+  ]);
 
   const activePauseMs = phasePausedMs + (pausedAt ? Date.now() - pausedAt : 0);
-  const sessionPauseMs = sessionPausedMs + (pausedAt ? Date.now() - pausedAt : 0);
   const isPaused = pausedAt !== null;
   const elapsed =
     isActive && workStartedAt ? Math.max(0, Date.now() - workStartedAt - activePauseMs) : 0;
   const workRemaining = Math.max(0, WORK_MS - elapsed);
+  const breakMs = Math.max(1, plannedBreakMinutes(block ?? { planned_break_minutes: 15 })) * 60000;
   const breakElapsed = breakStart ? Math.max(0, Date.now() - breakStart - activePauseMs) : 0;
-  const breakRemaining = Math.max(0, BREAK_MS - breakElapsed);
+  const breakRemaining = Math.max(0, breakMs - breakElapsed);
+  const currentWorkMs = phase === "work" ? Math.min(elapsed, WORK_MS) : 0;
+  const actualWorkMs = completedWorkMs + currentWorkMs;
+  const actualWorkMinutes = Math.max(0, Math.round(actualWorkMs / 60000));
+  const scheduledMinutes = block ? Math.max(1, blockDurationMinutes(block)) : 1;
+  const calculatedPortion = Math.min(
+    1,
+    Math.round((actualWorkMinutes / scheduledMinutes) * 100) / 100,
+  );
+  const pauseRemaining = pausedAt
+    ? Math.max(0, MAX_PAUSE_MS - (Date.now() - pausedAt))
+    : MAX_PAUSE_MS;
+  const pausesLeft = Math.max(0, MAX_PAUSES_PER_BLOCK - pauseCount);
+  const persistTimer = useCallback(
+    (overrides: Partial<TimerSessionPayload> = {}) => {
+      const nextWorkStartedAt = overrides.workStartedAt ?? workStartedAt;
+      if (!isActive || !block?.id || !nextWorkStartedAt) return;
+      saveTimerSession(videoId, block.id, {
+        phase,
+        workStartedAt: nextWorkStartedAt,
+        breakStart,
+        pausedAt,
+        phasePausedMs,
+        sessionPausedMs,
+        completedWorkMs,
+        pauseCount,
+        chimedWork: chimedWorkRef.current,
+        chimedBreak: chimedBreakRef.current,
+        ...overrides,
+      });
+    },
+    [
+      block?.id,
+      breakStart,
+      completedWorkMs,
+      isActive,
+      pauseCount,
+      pausedAt,
+      phase,
+      phasePausedMs,
+      sessionPausedMs,
+      videoId,
+      workStartedAt,
+    ],
+  );
 
   // Auto-trigger break when work hour is up
   useEffect(() => {
@@ -549,7 +835,8 @@ function TimerPanel({
       !chimedWorkRef.current
     ) {
       chimedWorkRef.current = true;
-      toast.info("Hour's up — take a 15-minute break.");
+      toast.info(`Hour's up — take a ${Math.round(breakMs / 60000)}-minute break.`);
+      setCompletedWorkMs((ms) => ms + Math.min(elapsed, WORK_MS));
       setPhase("break");
       setBreakStart(Date.now());
       setPausedAt(null);
@@ -565,10 +852,15 @@ function TimerPanel({
       chimedBreakRef.current = true;
       toast.success("Break's over. Back to work.");
     }
-  }, [isActive, isPaused, phase, workRemaining, breakRemaining, breakStart]);
+  }, [isActive, isPaused, phase, workRemaining, breakRemaining, breakStart, elapsed, breakMs]);
 
   const pauseTimer = (reason: PauseReasonId) => {
     if (pausedAt) return;
+    if (pauseCount >= MAX_PAUSES_PER_BLOCK) {
+      toast.error("Pause limit reached for this block.");
+      setChoosingPauseReason(false);
+      return;
+    }
     if (block) {
       onPause({
         blockId: block.id,
@@ -577,42 +869,87 @@ function TimerPanel({
         phase,
       });
     }
-    setPausedAt(Date.now());
+    const nextPausedAt = Date.now();
+    const nextPauseCount = pauseCount + 1;
+    setPausedAt(nextPausedAt);
+    setPauseCount(nextPauseCount);
     setChoosingPauseReason(false);
+    persistTimer({ pausedAt: nextPausedAt, pauseCount: nextPauseCount });
   };
 
-  const resumeTimer = () => {
+  const resumeTimer = (auto = false) => {
     if (!pausedAt) return;
-    const delta = Date.now() - pausedAt;
-    setPhasePausedMs((ms) => ms + delta);
-    setSessionPausedMs((ms) => ms + delta);
+    const delta = Math.min(MAX_PAUSE_MS, Date.now() - pausedAt);
+    const nextPhasePausedMs = phasePausedMs + delta;
+    const nextSessionPausedMs = sessionPausedMs + delta;
+    setPhasePausedMs(nextPhasePausedMs);
+    setSessionPausedMs(nextSessionPausedMs);
     setPausedAt(null);
     setChoosingPauseReason(false);
+    persistTimer({
+      pausedAt: null,
+      phasePausedMs: nextPhasePausedMs,
+      sessionPausedMs: nextSessionPausedMs,
+    });
+    if (auto) toast.warning("Pause time is over. Got to go back to work.");
   };
 
+  useEffect(() => {
+    if (!pausedAt || pauseRemaining > 0) return;
+    const delta = MAX_PAUSE_MS;
+    const nextPhasePausedMs = phasePausedMs + delta;
+    const nextSessionPausedMs = sessionPausedMs + delta;
+    setPhasePausedMs(nextPhasePausedMs);
+    setSessionPausedMs(nextSessionPausedMs);
+    setPausedAt(null);
+    setChoosingPauseReason(false);
+    persistTimer({
+      pausedAt: null,
+      phasePausedMs: nextPhasePausedMs,
+      sessionPausedMs: nextSessionPausedMs,
+    });
+    toast.warning("Pause time is over. Got to go back to work.");
+  }, [pausedAt, pauseRemaining, phasePausedMs, persistTimer, sessionPausedMs]);
+
   const returnToWork = () => {
+    const nextWorkStartedAt = Date.now();
     setPhase("work");
-    setWorkStartedAt(Date.now());
+    setWorkStartedAt(nextWorkStartedAt);
     setBreakStart(null);
     setPausedAt(null);
     setPhasePausedMs(0);
     setChoosingPauseReason(false);
     chimedWorkRef.current = false;
     chimedBreakRef.current = false;
+    persistTimer({
+      phase: "work",
+      workStartedAt: nextWorkStartedAt,
+      breakStart: null,
+      pausedAt: null,
+      phasePausedMs: 0,
+      chimedWork: false,
+      chimedBreak: false,
+    });
   };
 
   const clockIn = async () => {
     if (!block) return;
+    clearTimerSession(videoId, block.id);
     if (mode === "local") {
       updateLocalBlock(block.id, {
         status: "in_progress",
         clock_in_at: new Date().toISOString(),
         clock_out_at: null,
         actual_minutes: 0,
+        pause_count: 0,
+        pause_minutes: 0,
+        task_snapshot: null,
       });
       setPausedAt(null);
       setPhasePausedMs(0);
       setSessionPausedMs(0);
+      setCompletedWorkMs(0);
+      setPauseCount(0);
       setChoosingPauseReason(false);
       toast.success("Clocked in locally.");
       onChanged();
@@ -627,6 +964,9 @@ function TimerPanel({
         clock_in_at: new Date().toISOString(),
         clock_out_at: null,
         actual_minutes: 0,
+        pause_count: 0,
+        pause_minutes: 0,
+        task_snapshot: null,
       })
       .eq("id", block.id);
     setBusy(false);
@@ -634,18 +974,23 @@ function TimerPanel({
       toast.error(`Clock-in failed: ${error.message}`);
       return;
     }
+    setCompletedWorkMs(0);
+    setPauseCount(0);
     toast.success("Clocked in.");
     onChanged();
   };
 
   const skip = async () => {
     if (!block) return;
+    clearTimerSession(videoId, block.id);
     if (mode === "local") {
       updateLocalBlock(block.id, {
         status: "missed",
         clock_in_at: null,
         clock_out_at: null,
         actual_minutes: 0,
+        pause_count: 0,
+        pause_minutes: 0,
       });
       rebalanceLocalWeek();
       toast.success("Block marked missed locally.");
@@ -661,6 +1006,8 @@ function TimerPanel({
         clock_in_at: null,
         clock_out_at: null,
         actual_minutes: 0,
+        pause_count: 0,
+        pause_minutes: 0,
       })
       .eq("id", block.id);
     if (!error) {
@@ -678,21 +1025,23 @@ function TimerPanel({
 
   const confirmWrap = async () => {
     if (!block) return;
+    clearTimerSession(videoId, block.id);
     setBusy(true);
-    const start = block.clock_in_at ? new Date(block.clock_in_at) : new Date();
     const end = new Date();
-    const minutes = Math.max(
-      1,
-      Math.round((end.getTime() - start.getTime() - sessionPauseMs) / 60000),
-    );
-    const portion = completionPortion;
-    const nextStatus = portion >= 1 ? "done" : "partial";
+    const minutes = actualWorkMinutes;
+    const assignedPortion = Math.max(0, Number(block.assigned_portion || 1));
+    const portion = Math.min(assignedPortion, calculatedPortion * assignedPortion);
+    const nextStatus = calculatedPortion >= 1 ? "done" : "partial";
+    const pauseMinutes = Math.round(sessionPausedMs / 60000);
 
     if (mode === "local") {
       updateLocalBlock(block.id, {
         status: nextStatus,
         clock_out_at: end.toISOString(),
         actual_minutes: minutes,
+        pause_count: pauseCount,
+        pause_minutes: pauseMinutes,
+        task_snapshot: taskSnapshot as unknown as Json,
       });
       if (stage) {
         const newActual = Number(stage.actual_blocks) + portion;
@@ -717,6 +1066,9 @@ function TimerPanel({
         status: nextStatus,
         clock_out_at: end.toISOString(),
         actual_minutes: minutes,
+        pause_count: pauseCount,
+        pause_minutes: pauseMinutes,
+        task_snapshot: taskSnapshot as unknown as Json,
       })
       .eq("id", block.id);
     if (bErr) {
@@ -752,20 +1104,15 @@ function TimerPanel({
 
   const wrapControls = (
     <div className="w-full max-w-md mt-2 pt-4 border-t border-border space-y-3 text-left">
-      <div className="space-y-2">
-        <div className="text-sm text-muted-foreground">How much of this block did you finish?</div>
-        <div className="grid grid-cols-4 gap-2">
-          {COMPLETION_OPTIONS.map((option) => (
-            <Button
-              key={option.label}
-              type="button"
-              variant={completionPortion === option.value ? "default" : "outline"}
-              size="sm"
-              onClick={() => setCompletionPortion(option.value)}
-            >
-              {option.label}
-            </Button>
-          ))}
+      <div className="rounded-md border border-border bg-background p-3">
+        <div className="text-xs uppercase tracking-wider text-muted-foreground">
+          Auto-calculated completion
+        </div>
+        <div className="mt-1 text-2xl font-semibold tabular-nums">
+          {Math.round(calculatedPortion * 100)}%
+        </div>
+        <div className="mt-1 text-xs text-muted-foreground">
+          {actualWorkMinutes}m focused out of {scheduledMinutes}m scheduled.
         </div>
       </div>
       <div className="flex justify-end gap-2">
@@ -803,11 +1150,17 @@ function TimerPanel({
       <div className="flex items-center justify-center gap-2">
         <Button
           variant="outline"
-          onClick={isPaused ? resumeTimer : () => setChoosingPauseReason((value) => !value)}
+          onClick={isPaused ? () => resumeTimer() : () => setChoosingPauseReason((value) => !value)}
+          disabled={!isPaused && pausesLeft === 0}
         >
           {isPaused ? <Play className="size-4 mr-2" /> : <Pause className="size-4 mr-2" />}
           {isPaused ? "Resume" : "Pause"}
         </Button>
+      </div>
+      <div className="text-center text-xs text-muted-foreground tabular-nums">
+        {isPaused
+          ? `Pause ends in ${fmtClock(pauseRemaining)}`
+          : `${pausesLeft} pause${pausesLeft === 1 ? "" : "s"} left`}
       </div>
     </div>
   );
@@ -848,13 +1201,24 @@ function TimerPanel({
 
   // Active — work or break
   if (phase === "break") {
-    const ringPct = (breakRemaining / BREAK_MS) * 100;
+    const ringPct = (breakRemaining / breakMs) * 100;
     return (
       <Card className="p-8 flex flex-col items-center text-center gap-4">
         <div className="flex items-center gap-2 text-amber-600 text-xs uppercase tracking-wider">
           <Coffee className="size-4" /> Break
         </div>
-        <TimerRing pct={Math.min(100, ringPct)} label={fmtClock(breakRemaining)} accent="amber" />
+        <TimerRing
+          pct={Math.min(100, ringPct)}
+          label={fmtClock(breakRemaining)}
+          accent="amber"
+          caption={`${Math.round(100 - ringPct)}% break complete`}
+        />
+        <div className="rounded-md border border-border px-4 py-2">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            Actual work done
+          </div>
+          <div className="text-lg font-semibold tabular-nums">{fmtWorkDone(actualWorkMs)}</div>
+        </div>
         <div className="text-sm text-muted-foreground">15-minute breather. Stand up, hydrate.</div>
         {!wrapping ? (
           <div className="flex flex-col items-center gap-3">
@@ -878,15 +1242,20 @@ function TimerPanel({
     <Card className="p-8 flex flex-col items-center text-center gap-4">
       <div className="text-xs uppercase tracking-wider text-muted-foreground">Working on</div>
       <div className="text-2xl font-semibold">{stageLabel}</div>
-      <TimerRing pct={ringPct} label={fmtClock(workRemaining)} accent="primary" />
+      <TimerRing
+        pct={ringPct}
+        label={fmtClock(workRemaining)}
+        accent="primary"
+        caption={`${Math.round(100 - ringPct)}% complete`}
+      />
+      <div className="rounded-md border border-border px-4 py-2">
+        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+          Actual work done
+        </div>
+        <div className="text-lg font-semibold tabular-nums">{fmtWorkDone(actualWorkMs)}</div>
+      </div>
       <div className="text-xs text-muted-foreground tabular-nums">
-        {isPaused ? (
-          "Paused"
-        ) : workRemaining > 0 ? (
-          <>{fmtClock(workRemaining)} until break</>
-        ) : (
-          <>break time</>
-        )}
+        {isPaused ? "Paused" : "No distractions. Don't break your focus."}
       </div>
       {!wrapping ? (
         <div className="flex flex-col items-center gap-3">
@@ -908,10 +1277,12 @@ function TimerRing({
   pct,
   label,
   accent,
+  caption,
 }: {
   pct: number;
   label: string;
   accent: "primary" | "amber";
+  caption: string;
 }) {
   const size = 280;
   const stroke = 10;
@@ -1009,7 +1380,7 @@ function TimerRing({
           {label}
         </div>
         <div className="mt-1 text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
-          {Math.round(pct)}% · {accent === "primary" ? "focus" : "rest"}
+          {caption}
         </div>
       </div>
     </div>
