@@ -102,25 +102,32 @@ function stageLabelFor(stages: StageRow[], stageId: string | null) {
 }
 
 function stageQueue(stages: StageRow[], blocks: WorkBlockRow[]) {
-  const futureAssigned = new Map<string, number>();
+  const futureAssignedMinutes = new Map<string, number>();
   for (const block of blocks) {
     if (!isClosedBlockStatus(block.status) && !block.is_catch_up && block.assigned_stage_id) {
-      futureAssigned.set(
+      futureAssignedMinutes.set(
         block.assigned_stage_id,
-        (futureAssigned.get(block.assigned_stage_id) ?? 0) + Number(block.assigned_portion || 1),
+        (futureAssignedMinutes.get(block.assigned_stage_id) ?? 0) + blockWorkCapacityMinutes(block),
       );
     }
   }
 
   return [...stages]
     .sort((a, b) => a.order_index - b.order_index)
-    .flatMap((stage) => {
-      const planned = Number(stage.planned_blocks);
-      const actual = Number(stage.actual_blocks);
-      const alreadyScheduled = futureAssigned.get(stage.id) ?? 0;
-      const missing = Math.max(0, planned - actual - alreadyScheduled);
-      return Array.from({ length: Math.ceil(missing) }, () => stage);
-    });
+    .map((stage) => {
+      const plannedMinutes = Number(stage.planned_blocks) * DEFAULT_BLOCK_MINUTES;
+      const actualMinutes =
+        Math.min(Number(stage.actual_blocks), Number(stage.planned_blocks)) * DEFAULT_BLOCK_MINUTES;
+      const alreadyScheduledMinutes = futureAssignedMinutes.get(stage.id) ?? 0;
+      return {
+        stage,
+        remainingMinutes: Math.max(
+          0,
+          Math.round(plannedMinutes - actualMinutes - alreadyScheduledMinutes),
+        ),
+      };
+    })
+    .filter((stageNeed) => stageNeed.remainingMinutes > 0);
 }
 
 function missedOrShortMinutes(blocks: WorkBlockRow[]) {
@@ -192,15 +199,13 @@ function availableExtraWindows(video: VideoRow, blocks: WorkBlockRow[], now: Dat
     })
     .filter((window): window is { day: number; start: Date; end: Date } =>
       Boolean(window && window.end.getTime() <= releaseEnd.getTime()),
-    );
+    )
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
 }
 
 function recoveryTargetMinutes(deficitMinutes: number) {
   if (deficitMinutes <= 0) return 0;
-  for (const chunk of [...CATCH_UP_CHUNKS].reverse()) {
-    if (deficitMinutes <= chunk) return chunk;
-  }
-  return MAX_CATCH_UP_MINUTES;
+  return Math.max(MIN_CATCH_UP_MINUTES, deficitMinutes);
 }
 
 function nextCatchUpChunk(remaining: number, capacity: number) {
@@ -241,22 +246,45 @@ export function buildCatchUpPlan(
 
   for (const window of availableExtraWindows(video, blocks, now)) {
     if (remaining <= 0) break;
-    const capacity = Math.round((window.end.getTime() - window.start.getTime()) / 60000);
-    const minutes = nextCatchUpChunk(remaining, capacity);
-    if (!minutes) continue;
-    const stage = queue[stageIndex++] ?? null;
-    actions.push({
-      id: `extra-${window.day}`,
-      type: "extra_block",
-      day_of_week: window.day,
-      slot: "EVE",
-      scheduled_start: window.start.toISOString(),
-      scheduled_end: new Date(window.start.getTime() + minutes * 60000).toISOString(),
-      minutes,
-      stageId: stage?.id ?? null,
-      stageLabel: stage ? STAGE_LABEL[stage.kind] : "Video work",
-    });
-    remaining -= minutes;
+
+    let cursor = new Date(window.start);
+    let capacity = Math.round((window.end.getTime() - cursor.getTime()) / 60000);
+
+    while (remaining > 0 && capacity >= MIN_CATCH_UP_MINUTES) {
+      const stageNeed = queue[stageIndex] ?? null;
+      const stageCapacity = stageNeed
+        ? Math.max(MIN_CATCH_UP_MINUTES, stageNeed.remainingMinutes)
+        : remaining;
+      const minutes =
+        nextCatchUpChunk(Math.min(remaining, stageCapacity), capacity) ??
+        nextCatchUpChunk(remaining, capacity);
+      if (!minutes) break;
+
+      const stage = stageNeed?.stage ?? null;
+      const start = new Date(cursor);
+      const end = new Date(start.getTime() + minutes * 60000);
+      actions.push({
+        id: `extra-${window.day}-${start.getTime()}`,
+        type: "extra_block",
+        day_of_week: window.day,
+        slot: "EVE",
+        scheduled_start: start.toISOString(),
+        scheduled_end: end.toISOString(),
+        minutes,
+        stageId: stage?.id ?? null,
+        stageLabel: stage ? STAGE_LABEL[stage.kind] : "Video work",
+      });
+
+      if (stageNeed) {
+        stageNeed.remainingMinutes -= minutes;
+        while (stageIndex < queue.length && queue[stageIndex].remainingMinutes <= 0) {
+          stageIndex += 1;
+        }
+      }
+      remaining -= minutes;
+      cursor = end;
+      capacity = Math.round((window.end.getTime() - cursor.getTime()) / 60000);
+    }
   }
 
   const restCutBlocks = futureBlocks
