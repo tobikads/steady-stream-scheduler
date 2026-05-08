@@ -41,7 +41,7 @@ function fmtTime(value: string) {
 }
 
 function portionFor(minutes: number) {
-  return Math.max(0.01, Math.min(1, Math.round((minutes / DEFAULT_BLOCK_MINUTES) * 100) / 100));
+  return Math.max(0.01, Math.min(1, Math.round((minutes / DEFAULT_BLOCK_MINUTES) * 10000) / 10000));
 }
 
 function newLocalId(prefix: string) {
@@ -52,7 +52,7 @@ function newLocalId(prefix: string) {
 
 function actionTitle(action: CatchUpAction) {
   if (action.type === "extra_block") {
-    return `${dayLabel(action.day_of_week)} catch-up block`;
+    return `${dayLabel(action.day_of_week)} recovery time`;
   }
   return `${dayLabel(action.day_of_week)} ${action.slot} shorter break`;
 }
@@ -206,6 +206,14 @@ function CatchUpPageInner() {
       action.type === "short_break",
   );
   const restRecoveryMinutes = restActions.reduce((sum, action) => sum + action.minutes, 0);
+  const missBudgetLabel =
+    plan.missBudgetMinutes >= DEFAULT_BLOCK_MINUTES
+      ? `${plan.maxMissableFullBlocks} full ${plan.maxMissableFullBlocks === 1 ? "block" : "blocks"}`
+      : plan.missBudgetMinutes > 0
+        ? "Less than 1 block"
+        : "0 blocks";
+  const nextMissedBlockLabel =
+    plan.missBudgetMinutes >= DEFAULT_BLOCK_MINUTES ? "Still recoverable" : "Breaks Saturday";
   const status =
     plan.state === "on_track"
       ? { label: "On track", className: "bg-primary/15 text-primary border-primary/30" }
@@ -275,6 +283,47 @@ function CatchUpPageInner() {
           <Stat label="Real gap" value={formatCatchUpMinutes(plan.deficitMinutes)} />
           <Stat label="Recovery target" value={formatCatchUpMinutes(plan.targetRecoveryMinutes)} />
         </div>
+      </Card>
+
+      <Card className="p-6 space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="font-semibold">Recovery room</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              One full missed block equals {formatCatchUpMinutes(DEFAULT_BLOCK_MINUTES)} of focus.
+            </p>
+          </div>
+          <Badge variant="outline" className={status.className}>
+            {missBudgetLabel}
+          </Badge>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-4 text-sm">
+          <Stat
+            label="Total recovery capacity"
+            value={formatCatchUpMinutes(plan.recoveryCapacityMinutes)}
+          />
+          <Stat
+            label="Buffer after current gap"
+            value={formatCatchUpMinutes(plan.missBudgetMinutes)}
+          />
+          <Stat label="Full blocks you can miss" value={missBudgetLabel} />
+          <Stat label="If 1 more block is missed" value={nextMissedBlockLabel} />
+        </div>
+        {plan.state === "impossible" ? (
+          <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+            The current gap already uses more time than the remaining catch-up windows can provide.
+          </div>
+        ) : plan.missBudgetMinutes < DEFAULT_BLOCK_MINUTES ? (
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700">
+            There is less than one full block of room left, so the next missed block makes Saturday
+            unrealistic.
+          </div>
+        ) : (
+          <div className="rounded-md border border-border p-3 text-sm text-muted-foreground">
+            This buffer includes future catch-up windows and meaningful bundled rest cuts that the
+            plan can apply.
+          </div>
+        )}
       </Card>
 
       <Card className="p-6 space-y-4">

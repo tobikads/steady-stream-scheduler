@@ -7,6 +7,8 @@ export const DEFAULT_BLOCK_MINUTES = 180;
 export const MIN_CATCH_UP_MINUTES = 30;
 export const MAX_CATCH_UP_MINUTES = 120;
 const CATCH_UP_CHUNKS = [120, 90, 60, 30] as const;
+const CATCH_UP_CHUNKS_ASC = [...CATCH_UP_CHUNKS].reverse();
+const MAX_RECOVERY_PROBE_MINUTES = 7 * 24 * 60;
 
 export type CatchUpAction =
   | {
@@ -41,8 +43,11 @@ export interface CatchUpPlan {
   missedOrShortMinutes: number;
   deficitMinutes: number;
   targetRecoveryMinutes: number;
+  recoveryCapacityMinutes: number;
   recoveryMinutes: number;
   remainingGapMinutes: number;
+  missBudgetMinutes: number;
+  maxMissableFullBlocks: number;
   actions: CatchUpAction[];
 }
 
@@ -65,13 +70,53 @@ export function blockDurationMinutes(
   return Math.max(0, Math.round((end - start) / 60000));
 }
 
+function minutesSinceMidnight(value: string) {
+  const date = new Date(value);
+  return date.getHours() * 60 + date.getMinutes();
+}
+
+export function isRecoveryBlock(
+  block: Pick<
+    WorkBlockRow,
+    "is_catch_up" | "day_of_week" | "slot" | "scheduled_start" | "scheduled_end"
+  >,
+) {
+  if (block.is_catch_up) return true;
+  if (block.slot !== "EVE") return false;
+
+  const start = minutesSinceMidnight(block.scheduled_start);
+  const end = minutesSinceMidnight(block.scheduled_end);
+  if (end <= start) return false;
+
+  const mondayOrWednesdayWindow =
+    [1, 3].includes(block.day_of_week) && start >= 18 * 60 && end <= 22 * 60;
+  const eveningGapWindow =
+    [2, 4, 5, 6].includes(block.day_of_week) && start >= 18 * 60 && end <= 20 * 60;
+  return mondayOrWednesdayWindow || eveningGapWindow;
+}
+
+export function blockDisplayTitle(block: WorkBlockRow, stage: StageRow | null | undefined) {
+  if (isRecoveryBlock(block)) return "Recovery time";
+  return stage ? STAGE_LABEL[stage.kind] : "Unassigned";
+}
+
+export function recoveryStageDetail(block: WorkBlockRow, stage: StageRow | null | undefined) {
+  if (!isRecoveryBlock(block) || !stage) return null;
+  return `Makes up ${STAGE_LABEL[stage.kind]}`;
+}
+
 export function blockWorkCapacityMinutes(
   block: Pick<
     WorkBlockRow,
-    "scheduled_start" | "scheduled_end" | "assigned_portion" | "is_catch_up"
+    | "scheduled_start"
+    | "scheduled_end"
+    | "assigned_portion"
+    | "is_catch_up"
+    | "day_of_week"
+    | "slot"
   >,
 ) {
-  if (block.is_catch_up) return blockDurationMinutes(block);
+  if (isRecoveryBlock(block)) return blockDurationMinutes(block);
   return DEFAULT_BLOCK_MINUTES * Number(block.assigned_portion || 1);
 }
 
@@ -104,7 +149,7 @@ function stageLabelFor(stages: StageRow[], stageId: string | null) {
 function stageQueue(stages: StageRow[], blocks: WorkBlockRow[]) {
   const futureAssignedMinutes = new Map<string, number>();
   for (const block of blocks) {
-    if (!isClosedBlockStatus(block.status) && !block.is_catch_up && block.assigned_stage_id) {
+    if (!isClosedBlockStatus(block.status) && block.assigned_stage_id) {
       futureAssignedMinutes.set(
         block.assigned_stage_id,
         (futureAssignedMinutes.get(block.assigned_stage_id) ?? 0) + blockWorkCapacityMinutes(block),
@@ -155,7 +200,7 @@ function usableWindow(day: number, start: Date, end: Date, blocks: WorkBlockRow[
       : start;
   const minutes = Math.round((end.getTime() - adjustedStart.getTime()) / 60000);
   const overlapsExistingCatchUp = blocks.some((block) => {
-    if (!block.is_catch_up || block.day_of_week !== day) return false;
+    if (!isRecoveryBlock(block) || block.day_of_week !== day) return false;
     const blockStart = new Date(block.scheduled_start).getTime();
     const blockEnd = new Date(block.scheduled_end).getTime();
     return blockStart < end.getTime() && blockEnd > adjustedStart.getTime();
@@ -209,36 +254,24 @@ function recoveryTargetMinutes(deficitMinutes: number) {
 }
 
 function nextCatchUpChunk(remaining: number, capacity: number) {
-  return CATCH_UP_CHUNKS.find((chunk) => chunk <= capacity && chunk <= remaining) ?? null;
+  return (
+    CATCH_UP_CHUNKS_ASC.find((chunk) => chunk <= capacity && chunk >= remaining) ??
+    CATCH_UP_CHUNKS.find((chunk) => chunk <= capacity && chunk <= remaining) ??
+    null
+  );
 }
 
-export function buildCatchUpPlan(
+function sumActionMinutes(actions: CatchUpAction[]) {
+  return actions.reduce((sum, action) => sum + action.minutes, 0);
+}
+
+function buildRecoveryActions(
   video: VideoRow,
   stages: StageRow[],
   blocks: WorkBlockRow[],
-  now = new Date(),
-): CatchUpPlan {
-  const totalPlannedBlocks = stages.reduce((sum, stage) => sum + Number(stage.planned_blocks), 0);
-  const totalActualBlocks = stages.reduce(
-    (sum, stage) => sum + Math.min(Number(stage.actual_blocks), Number(stage.planned_blocks)),
-    0,
-  );
-  const overallPct =
-    totalPlannedBlocks > 0 ? Math.min(100, (totalActualBlocks / totalPlannedBlocks) * 100) : 0;
-  const workLeftMinutes = Math.max(
-    0,
-    (totalPlannedBlocks - totalActualBlocks) * DEFAULT_BLOCK_MINUTES,
-  );
-  const futureBlocks = blocks.filter((block) => isFutureAvailable(block, now));
-  const alreadyAppliedBreakGain = futureBlocks.reduce(
-    (sum, block) => sum + Math.max(0, DEFAULT_BREAK_MINUTES - plannedBreakMinutes(block)),
-    0,
-  );
-  const futureScheduledMinutes =
-    futureBlocks.reduce((sum, block) => sum + blockWorkCapacityMinutes(block), 0) +
-    alreadyAppliedBreakGain;
-  const deficitMinutes = Math.max(0, Math.round(workLeftMinutes - futureScheduledMinutes));
-  const targetRecoveryMinutes = recoveryTargetMinutes(deficitMinutes);
+  now: Date,
+  targetRecoveryMinutes: number,
+) {
   const actions: CatchUpAction[] = [];
   const queue = stageQueue(stages, blocks);
   let remaining = targetRecoveryMinutes;
@@ -287,6 +320,7 @@ export function buildCatchUpPlan(
     }
   }
 
+  const futureBlocks = blocks.filter((block) => isFutureAvailable(block, now));
   const restCutBlocks = futureBlocks
     .filter(
       (block) =>
@@ -315,14 +349,50 @@ export function buildCatchUpPlan(
     });
     remaining -= minutes;
   }
-  const restCutMinutes = restCutActions.reduce((sum, action) => sum + action.minutes, 0);
-  if (restCutMinutes >= MIN_CATCH_UP_MINUTES) {
+
+  if (sumActionMinutes(restCutActions) >= MIN_CATCH_UP_MINUTES) {
     actions.push(...restCutActions);
-  } else {
-    remaining += restCutMinutes;
   }
 
-  const recoveryMinutes = actions.reduce((sum, action) => sum + action.minutes, 0);
+  return actions;
+}
+
+export function buildCatchUpPlan(
+  video: VideoRow,
+  stages: StageRow[],
+  blocks: WorkBlockRow[],
+  now = new Date(),
+): CatchUpPlan {
+  const totalPlannedBlocks = stages.reduce((sum, stage) => sum + Number(stage.planned_blocks), 0);
+  const totalActualBlocks = stages.reduce(
+    (sum, stage) => sum + Math.min(Number(stage.actual_blocks), Number(stage.planned_blocks)),
+    0,
+  );
+  const overallPct =
+    totalPlannedBlocks > 0 ? Math.min(100, (totalActualBlocks / totalPlannedBlocks) * 100) : 0;
+  const workLeftMinutes = Math.max(
+    0,
+    (totalPlannedBlocks - totalActualBlocks) * DEFAULT_BLOCK_MINUTES,
+  );
+  const futureBlocks = blocks.filter((block) => isFutureAvailable(block, now));
+  const alreadyAppliedBreakGain = futureBlocks.reduce(
+    (sum, block) => sum + Math.max(0, DEFAULT_BREAK_MINUTES - plannedBreakMinutes(block)),
+    0,
+  );
+  const futureScheduledMinutes =
+    futureBlocks.reduce((sum, block) => sum + blockWorkCapacityMinutes(block), 0) +
+    alreadyAppliedBreakGain;
+  const deficitMinutes = Math.max(0, Math.round(workLeftMinutes - futureScheduledMinutes));
+  const targetRecoveryMinutes = recoveryTargetMinutes(deficitMinutes);
+  const actions = buildRecoveryActions(video, stages, blocks, now, targetRecoveryMinutes);
+  const recoveryCapacityMinutes = sumActionMinutes(
+    buildRecoveryActions(video, stages, blocks, now, MAX_RECOVERY_PROBE_MINUTES),
+  );
+  const missBudgetMinutes = Math.max(
+    0,
+    Math.round(futureScheduledMinutes + recoveryCapacityMinutes - workLeftMinutes),
+  );
+  const recoveryMinutes = sumActionMinutes(actions);
   const remainingGapMinutes = Math.max(0, deficitMinutes - recoveryMinutes);
   return {
     state:
@@ -333,8 +403,11 @@ export function buildCatchUpPlan(
     missedOrShortMinutes: Math.round(missedOrShortMinutes(blocks)),
     deficitMinutes,
     targetRecoveryMinutes,
+    recoveryCapacityMinutes,
     recoveryMinutes,
     remainingGapMinutes,
+    missBudgetMinutes,
+    maxMissableFullBlocks: Math.floor(missBudgetMinutes / DEFAULT_BLOCK_MINUTES),
     actions,
   };
 }
