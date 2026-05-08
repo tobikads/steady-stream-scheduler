@@ -15,6 +15,7 @@ import {
 import type { WorkBlockRow } from "@/lib/db-types";
 import { updateLocalWeek } from "@/lib/local-week";
 import { STAGE_LABEL } from "@/lib/schedule";
+import { isWorkBlockSchemaCacheError } from "@/lib/supabase-errors";
 import { applyRebalance } from "@/lib/week-setup";
 import { useCurrentWeek } from "@/hooks/use-current-week";
 import { createFileRoute } from "@tanstack/react-router";
@@ -132,20 +133,33 @@ async function applyCloudActions(videoId: string, userId: string, actions: Catch
   );
 
   if (extraBlocks.length > 0) {
-    const { error } = await supabase.from("work_blocks").insert(
-      extraBlocks.map((action) => ({
-        video_id: videoId,
-        user_id: userId,
-        day_of_week: action.day_of_week,
-        slot: action.slot,
-        scheduled_start: action.scheduled_start,
-        scheduled_end: action.scheduled_end,
-        assigned_stage_id: action.stageId,
-        assigned_portion: portionFor(action.minutes),
-        is_catch_up: true,
-        planned_break_minutes: 10,
-      })),
-    );
+    const richPayload = extraBlocks.map((action) => ({
+      video_id: videoId,
+      user_id: userId,
+      day_of_week: action.day_of_week,
+      slot: action.slot,
+      scheduled_start: action.scheduled_start,
+      scheduled_end: action.scheduled_end,
+      assigned_stage_id: action.stageId,
+      assigned_portion: portionFor(action.minutes),
+      is_catch_up: true,
+      planned_break_minutes: 10,
+    }));
+    const basePayload = extraBlocks.map((action) => ({
+      video_id: videoId,
+      user_id: userId,
+      day_of_week: action.day_of_week,
+      slot: action.slot,
+      scheduled_start: action.scheduled_start,
+      scheduled_end: action.scheduled_end,
+      assigned_stage_id: action.stageId,
+      assigned_portion: portionFor(action.minutes),
+    }));
+    let { error } = await supabase.from("work_blocks").insert(richPayload);
+    if (isWorkBlockSchemaCacheError(error)) {
+      const retry = await supabase.from("work_blocks").insert(basePayload);
+      error = retry.error;
+    }
     if (error) throw error;
   }
 
@@ -158,7 +172,7 @@ async function applyCloudActions(videoId: string, userId: string, actions: Catch
     ),
   );
   const updateError = updates.find((result) => result.error)?.error;
-  if (updateError) throw updateError;
+  if (updateError && !isWorkBlockSchemaCacheError(updateError)) throw updateError;
 
   const rebalance = await applyRebalance(videoId);
   if (!rebalance.ok) throw new Error(rebalance.error ?? "Rebalance failed");

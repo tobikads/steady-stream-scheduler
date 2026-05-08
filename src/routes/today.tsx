@@ -7,6 +7,7 @@ import { useCurrentWeek } from "@/hooks/use-current-week";
 import { applyRebalance } from "@/lib/week-setup";
 import { STAGE_LABEL } from "@/lib/schedule";
 import { blockDurationMinutes, plannedBreakMinutes } from "@/lib/catch-up";
+import { isWorkBlockSchemaCacheError } from "@/lib/supabase-errors";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -964,9 +965,6 @@ function TimerPanel({
         clock_in_at: new Date().toISOString(),
         clock_out_at: null,
         actual_minutes: 0,
-        pause_count: 0,
-        pause_minutes: 0,
-        task_snapshot: null,
       })
       .eq("id", block.id);
     setBusy(false);
@@ -1006,8 +1004,6 @@ function TimerPanel({
         clock_in_at: null,
         clock_out_at: null,
         actual_minutes: 0,
-        pause_count: 0,
-        pause_minutes: 0,
       })
       .eq("id", block.id);
     if (!error) {
@@ -1060,17 +1056,28 @@ function TimerPanel({
       return;
     }
 
-    const { error: bErr } = await supabase
+    const baseBlockPatch = {
+      status: nextStatus,
+      clock_out_at: end.toISOString(),
+      actual_minutes: minutes,
+    };
+    const richBlockPatch = {
+      ...baseBlockPatch,
+      pause_count: pauseCount,
+      pause_minutes: pauseMinutes,
+      task_snapshot: taskSnapshot as unknown as Json,
+    };
+    let { error: bErr } = await supabase
       .from("work_blocks")
-      .update({
-        status: nextStatus,
-        clock_out_at: end.toISOString(),
-        actual_minutes: minutes,
-        pause_count: pauseCount,
-        pause_minutes: pauseMinutes,
-        task_snapshot: taskSnapshot as unknown as Json,
-      })
+      .update(richBlockPatch)
       .eq("id", block.id);
+    if (isWorkBlockSchemaCacheError(bErr)) {
+      const retry = await supabase.from("work_blocks").update(baseBlockPatch).eq("id", block.id);
+      bErr = retry.error;
+      if (!bErr) {
+        toast.info("Clocked out. Session details will sync after the database updates.");
+      }
+    }
     if (bErr) {
       setBusy(false);
       toast.error(`Clock-out failed: ${bErr.message}`);
