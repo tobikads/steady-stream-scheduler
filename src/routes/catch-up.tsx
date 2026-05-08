@@ -183,6 +183,15 @@ function CatchUpPageInner() {
 
   const plan = buildCatchUpPlan(data.video, data.stages, data.blocks);
   const canApply = plan.actions.length > 0 && plan.state !== "on_track";
+  const extraActions = plan.actions.filter(
+    (action): action is Extract<CatchUpAction, { type: "extra_block" }> =>
+      action.type === "extra_block",
+  );
+  const restActions = plan.actions.filter(
+    (action): action is Extract<CatchUpAction, { type: "short_break" }> =>
+      action.type === "short_break",
+  );
+  const restRecoveryMinutes = restActions.reduce((sum, action) => sum + action.minutes, 0);
   const status =
     plan.state === "on_track"
       ? { label: "On track", className: "bg-primary/15 text-primary border-primary/30" }
@@ -293,7 +302,7 @@ function CatchUpPageInner() {
           </div>
         ) : (
           <div className="space-y-2">
-            {plan.actions.map((action) => (
+            {extraActions.map((action) => (
               <div key={action.id} className="rounded-md border border-border p-3 text-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="font-medium">{actionTitle(action)}</div>
@@ -307,6 +316,20 @@ function CatchUpPageInner() {
                 </div>
               </div>
             ))}
+            {restActions.length > 0 && (
+              <div className="rounded-md border border-border p-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-medium">Shorten upcoming breaks</div>
+                  <Badge variant="outline" className="text-[10px]">
+                    +{formatCatchUpMinutes(restRecoveryMinutes)}
+                  </Badge>
+                </div>
+                <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Clock3 className="size-3.5" />
+                  {restActions.length} future breaks move from 15m to 10m.
+                </div>
+              </div>
+            )}
           </div>
         )}
       </Card>

@@ -122,25 +122,63 @@ function missedOrShortMinutes(blocks: WorkBlockRow[]) {
   }, 0);
 }
 
+function roundUpToNextFiveMinutes(date: Date) {
+  const next = new Date(date);
+  next.setSeconds(0, 0);
+  const remainder = next.getMinutes() % 5;
+  if (remainder > 0) next.setMinutes(next.getMinutes() + (5 - remainder));
+  return next;
+}
+
+function usableWindow(day: number, start: Date, end: Date, blocks: WorkBlockRow[], now: Date) {
+  const adjustedStart =
+    now.getTime() > start.getTime() && now.getTime() < end.getTime()
+      ? roundUpToNextFiveMinutes(now)
+      : start;
+  const minutes = Math.round((end.getTime() - adjustedStart.getTime()) / 60000);
+  const overlapsExistingCatchUp = blocks.some((block) => {
+    if (!block.is_catch_up || block.day_of_week !== day) return false;
+    const blockStart = new Date(block.scheduled_start).getTime();
+    const blockEnd = new Date(block.scheduled_end).getTime();
+    return blockStart < end.getTime() && blockEnd > adjustedStart.getTime();
+  });
+
+  if (
+    overlapsExistingCatchUp ||
+    adjustedStart.getTime() <= now.getTime() ||
+    minutes < MIN_CATCH_UP_MINUTES
+  ) {
+    return null;
+  }
+
+  return { day, start: adjustedStart, end };
+}
+
 function availableExtraWindows(video: VideoRow, blocks: WorkBlockRow[], now: Date) {
   const monday = localDateFromISODate(video.week_start);
   const releaseEnd = endOfReleaseDay(video.release_date);
-  return [1, 3]
-    .map((day) => {
+  const windows = [
+    ...[1, 3].map((day) => ({ day, startHour: 20, startMinute: 0, endHour: 23, endMinute: 30 })),
+    ...[2, 4, 5, 6].map((day) => ({
+      day,
+      startHour: 18,
+      startMinute: 0,
+      endHour: 20,
+      endMinute: 0,
+    })),
+  ];
+
+  return windows
+    .map(({ day, startHour, startMinute, endHour, endMinute }) => {
       const start = addDays(monday, day - 1);
-      start.setHours(20, 0, 0, 0);
+      start.setHours(startHour, startMinute, 0, 0);
       const end = addDays(monday, day - 1);
-      end.setHours(23, 30, 0, 0);
-      return { day, start, end };
+      end.setHours(endHour, endMinute, 0, 0);
+      return usableWindow(day, start, end, blocks, now);
     })
-    .filter(({ day, start, end }) => {
-      const alreadyExists = blocks.some(
-        (block) => block.day_of_week === day && block.slot === "EVE",
-      );
-      return (
-        !alreadyExists && start.getTime() > now.getTime() && end.getTime() <= releaseEnd.getTime()
-      );
-    });
+    .filter((window): window is { day: number; start: Date; end: Date } =>
+      Boolean(window && window.end.getTime() <= releaseEnd.getTime()),
+    );
 }
 
 export function buildCatchUpPlan(
@@ -208,11 +246,12 @@ export function buildCatchUpPlan(
     )
     .sort((a, b) => a.scheduled_start.localeCompare(b.scheduled_start));
 
+  const restCutActions: CatchUpAction[] = [];
   for (const block of restCutBlocks) {
     if (remaining <= 0) break;
     const currentBreak = plannedBreakMinutes(block);
     const minutes = Math.min(remaining, currentBreak - SHORT_BREAK_MINUTES);
-    actions.push({
+    restCutActions.push({
       id: `rest-${block.id}`,
       type: "short_break",
       blockId: block.id,
@@ -225,6 +264,12 @@ export function buildCatchUpPlan(
       stageLabel: stageLabelFor(stages, block.assigned_stage_id),
     });
     remaining -= minutes;
+  }
+  const restCutMinutes = restCutActions.reduce((sum, action) => sum + action.minutes, 0);
+  if (restCutMinutes >= MIN_CATCH_UP_MINUTES) {
+    actions.push(...restCutActions);
+  } else {
+    remaining += restCutMinutes;
   }
 
   const recoveryMinutes = actions.reduce((sum, action) => sum + action.minutes, 0);
