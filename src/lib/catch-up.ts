@@ -3,9 +3,10 @@ import { DAY_LABELS, STAGE_LABEL, addDays, isClosedBlockStatus } from "@/lib/sch
 
 export const DEFAULT_BREAK_MINUTES = 15;
 export const SHORT_BREAK_MINUTES = 10;
-export const DEFAULT_BLOCK_MINUTES = 210;
+export const DEFAULT_BLOCK_MINUTES = 180;
 export const MIN_CATCH_UP_MINUTES = 30;
 export const MAX_CATCH_UP_MINUTES = 120;
+const CATCH_UP_CHUNKS = [120, 90, 60, 30] as const;
 
 export type CatchUpAction =
   | {
@@ -64,6 +65,16 @@ export function blockDurationMinutes(
   return Math.max(0, Math.round((end - start) / 60000));
 }
 
+export function blockWorkCapacityMinutes(
+  block: Pick<
+    WorkBlockRow,
+    "scheduled_start" | "scheduled_end" | "assigned_portion" | "is_catch_up"
+  >,
+) {
+  if (block.is_catch_up) return blockDurationMinutes(block);
+  return DEFAULT_BLOCK_MINUTES * Number(block.assigned_portion || 1);
+}
+
 export function plannedBreakMinutes(block: Pick<WorkBlockRow, "planned_break_minutes">) {
   return typeof block.planned_break_minutes === "number" && block.planned_break_minutes > 0
     ? block.planned_break_minutes
@@ -114,7 +125,7 @@ function stageQueue(stages: StageRow[], blocks: WorkBlockRow[]) {
 
 function missedOrShortMinutes(blocks: WorkBlockRow[]) {
   return blocks.reduce((sum, block) => {
-    const expected = blockDurationMinutes(block) * Number(block.assigned_portion || 1);
+    const expected = blockWorkCapacityMinutes(block);
     if (block.status === "missed" || block.status === "skipped") return sum + expected;
     if (block.status === "partial")
       return sum + Math.max(0, expected - Number(block.actual_minutes || 0));
@@ -158,7 +169,10 @@ function availableExtraWindows(video: VideoRow, blocks: WorkBlockRow[], now: Dat
   const monday = localDateFromISODate(video.week_start);
   const releaseEnd = endOfReleaseDay(video.release_date);
   const windows = [
-    ...[1, 3].map((day) => ({ day, startHour: 20, startMinute: 0, endHour: 23, endMinute: 30 })),
+    ...[1, 3].flatMap((day) => [
+      { day, startHour: 18, startMinute: 0, endHour: 20, endMinute: 0 },
+      { day, startHour: 20, startMinute: 0, endHour: 22, endMinute: 0 },
+    ]),
     ...[2, 4, 5, 6].map((day) => ({
       day,
       startHour: 18,
@@ -179,6 +193,18 @@ function availableExtraWindows(video: VideoRow, blocks: WorkBlockRow[], now: Dat
     .filter((window): window is { day: number; start: Date; end: Date } =>
       Boolean(window && window.end.getTime() <= releaseEnd.getTime()),
     );
+}
+
+function recoveryTargetMinutes(deficitMinutes: number) {
+  if (deficitMinutes <= 0) return 0;
+  for (const chunk of [...CATCH_UP_CHUNKS].reverse()) {
+    if (deficitMinutes <= chunk) return chunk;
+  }
+  return MAX_CATCH_UP_MINUTES;
+}
+
+function nextCatchUpChunk(remaining: number, capacity: number) {
+  return CATCH_UP_CHUNKS.find((chunk) => chunk <= capacity && chunk <= remaining) ?? null;
 }
 
 export function buildCatchUpPlan(
@@ -204,13 +230,10 @@ export function buildCatchUpPlan(
     0,
   );
   const futureScheduledMinutes =
-    futureBlocks.reduce((sum, block) => sum + blockDurationMinutes(block), 0) +
+    futureBlocks.reduce((sum, block) => sum + blockWorkCapacityMinutes(block), 0) +
     alreadyAppliedBreakGain;
   const deficitMinutes = Math.max(0, Math.round(workLeftMinutes - futureScheduledMinutes));
-  const targetRecoveryMinutes =
-    deficitMinutes === 0
-      ? 0
-      : Math.min(MAX_CATCH_UP_MINUTES, Math.max(MIN_CATCH_UP_MINUTES, deficitMinutes));
+  const targetRecoveryMinutes = recoveryTargetMinutes(deficitMinutes);
   const actions: CatchUpAction[] = [];
   const queue = stageQueue(stages, blocks);
   let remaining = targetRecoveryMinutes;
@@ -218,10 +241,9 @@ export function buildCatchUpPlan(
 
   for (const window of availableExtraWindows(video, blocks, now)) {
     if (remaining <= 0) break;
-    const minutes = Math.min(
-      remaining,
-      Math.round((window.end.getTime() - window.start.getTime()) / 60000),
-    );
+    const capacity = Math.round((window.end.getTime() - window.start.getTime()) / 60000);
+    const minutes = nextCatchUpChunk(remaining, capacity);
+    if (!minutes) continue;
     const stage = queue[stageIndex++] ?? null;
     actions.push({
       id: `extra-${window.day}`,
