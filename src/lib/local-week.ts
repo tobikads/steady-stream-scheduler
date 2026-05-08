@@ -1,5 +1,6 @@
 import type { VideoBundle } from "@/hooks/use-current-week";
 import type { StageRow, VideoRow, WorkBlockRow } from "@/lib/db-types";
+import { isRecoveryBlock } from "@/lib/catch-up";
 import {
   STAGE_DEFAULTS,
   STAGE_ORDER,
@@ -50,7 +51,7 @@ function markOverdueMissed(blocks: WorkBlockRow[]) {
 function normalizeBlockDefaults(block: WorkBlockRow): WorkBlockRow {
   return {
     ...block,
-    is_catch_up: Boolean(block.is_catch_up),
+    is_catch_up: isRecoveryBlock(block),
     planned_break_minutes:
       typeof block.planned_break_minutes === "number" ? block.planned_break_minutes : 15,
     pause_count: typeof block.pause_count === "number" ? block.pause_count : 0,
@@ -123,7 +124,7 @@ function normalizeBundle(bundle: VideoBundle): VideoBundle {
   const overdueMarkedBlocks = markOverdueMissed(bundle.blocks.map(normalizeBlockDefaults));
   const assignments = rebalance(stages, overdueMarkedBlocks);
   const blocks = overdueMarkedBlocks.map((block) => {
-    if (isClosedBlockStatus(block.status) || block.is_catch_up) return block;
+    if (isClosedBlockStatus(block.status) || isRecoveryBlock(block)) return block;
     const assignment = assignments.find((item) => item.blockId === block.id);
     if (!assignment) return block;
     return {
@@ -212,7 +213,7 @@ function saveBundle(bundle: VideoBundle) {
 function rebalanceLocalBundle(bundle: VideoBundle): VideoBundle {
   const assignments = rebalance(bundle.stages, bundle.blocks);
   const blocks = bundle.blocks.map((block) => {
-    if (isClosedBlockStatus(block.status) || block.is_catch_up) return block;
+    if (isClosedBlockStatus(block.status) || isRecoveryBlock(block)) return block;
     const assignment = assignments.find((a) => a.blockId === block.id);
     if (!assignment) return block;
     return {

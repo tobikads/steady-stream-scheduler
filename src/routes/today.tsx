@@ -6,7 +6,12 @@ import { supabase } from "@/integrations/supabase/client";
 import { useCurrentWeek } from "@/hooks/use-current-week";
 import { applyRebalance } from "@/lib/week-setup";
 import { STAGE_LABEL } from "@/lib/schedule";
-import { blockWorkCapacityMinutes, plannedBreakMinutes } from "@/lib/catch-up";
+import {
+  blockDisplayTitle,
+  blockWorkCapacityMinutes,
+  plannedBreakMinutes,
+  recoveryStageDetail,
+} from "@/lib/catch-up";
 import { isWorkBlockSchemaCacheError } from "@/lib/supabase-errors";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -334,6 +339,8 @@ function TodayPageInner() {
           <Card className="p-2 divide-y divide-border">
             {todayBlocks.map((b) => {
               const stage = data.stages.find((s) => s.id === b.assigned_stage_id);
+              const title = blockDisplayTitle(b, stage);
+              const recoveryDetail = recoveryStageDetail(b, stage);
               const meta = badgeMeta(b.status);
               return (
                 <div
@@ -347,7 +354,10 @@ function TodayPageInner() {
                     <span className="tabular-nums text-muted-foreground">
                       {fmtTime(b.scheduled_start)} - {fmtTime(b.scheduled_end)}
                     </span>
-                    <span className="font-medium">{stage ? STAGE_LABEL[stage.kind] : "-"}</span>
+                    <span className="font-medium">{title}</span>
+                    {recoveryDetail && (
+                      <span className="text-xs text-muted-foreground">{recoveryDetail}</span>
+                    )}
                   </div>
                   <span className={`text-[10px] px-1.5 py-0.5 rounded border ${meta.className}`}>
                     {meta.label}
@@ -698,6 +708,8 @@ function TimerPanel({
 }) {
   const stage = block ? stages.find((s) => s.id === block.assigned_stage_id) : null;
   const stageLabel = stage ? STAGE_LABEL[stage.kind] : "Unassigned";
+  const blockTitle = block ? blockDisplayTitle(block, stage) : stageLabel;
+  const recoveryDetail = block ? recoveryStageDetail(block, stage) : null;
   const isActive = block?.status === "in_progress";
 
   const [phase, setPhase] = useState<TimerPhase>("work");
@@ -1188,7 +1200,8 @@ function TimerPanel({
         <div className="text-xs uppercase tracking-wider text-muted-foreground">
           {isNow ? "Ready to start" : "Next block"}
         </div>
-        <div className="text-3xl font-semibold">{stageLabel}</div>
+        <div className="text-3xl font-semibold">{blockTitle}</div>
+        {recoveryDetail && <div className="text-sm text-muted-foreground">{recoveryDetail}</div>}
         <div className="text-sm text-muted-foreground tabular-nums">
           {new Date(block.scheduled_start).toLocaleDateString([], { weekday: "short" })}{" "}
           {fmtTime(block.scheduled_start)} – {fmtTime(block.scheduled_end)}
@@ -1248,7 +1261,8 @@ function TimerPanel({
   return (
     <Card className="p-8 flex flex-col items-center text-center gap-4">
       <div className="text-xs uppercase tracking-wider text-muted-foreground">Working on</div>
-      <div className="text-2xl font-semibold">{stageLabel}</div>
+      <div className="text-2xl font-semibold">{blockTitle}</div>
+      {recoveryDetail && <div className="text-sm text-muted-foreground">{recoveryDetail}</div>}
       <TimerRing
         pct={ringPct}
         label={fmtClock(workRemaining)}

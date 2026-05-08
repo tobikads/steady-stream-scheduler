@@ -12,6 +12,7 @@ import {
   totalRemainingBlocks,
   upcomingBlockCount,
 } from "@/lib/schedule";
+import { blockDisplayTitle, recoveryStageDetail } from "@/lib/catch-up";
 import { CheckCircle2 } from "lucide-react";
 import type { WorkBlockRow, WorkBlockStatus } from "@/lib/db-types";
 
@@ -250,6 +251,8 @@ function WeekPageInner() {
                 <div className="space-y-2">
                   {blocks.map((b) => {
                     const stage = data.stages.find((s) => s.id === b.assigned_stage_id);
+                    const title = blockDisplayTitle(b, stage);
+                    const recoveryDetail = recoveryStageDetail(b, stage);
                     const displayStatus = effectiveBlockStatus(b, now);
                     const meta = statusMeta(displayStatus);
                     const isDone = displayStatus === "done";
@@ -278,12 +281,15 @@ function WeekPageInner() {
                           </span>
                         </div>
                         <div className="font-medium">
-                          {stage ? (
-                            STAGE_LABEL[stage.kind]
+                          {title !== "Unassigned" ? (
+                            title
                           ) : (
                             <span className="text-muted-foreground italic">unassigned</span>
                           )}
                         </div>
+                        {recoveryDetail && (
+                          <div className="text-xs text-muted-foreground">{recoveryDetail}</div>
+                        )}
                         {isDone && b.actual_minutes > 0 && (
                           <div className="text-xs text-muted-foreground flex items-center gap-1">
                             <CheckCircle2 className="size-3 text-primary" /> {b.actual_minutes}m

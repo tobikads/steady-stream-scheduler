@@ -41,7 +41,7 @@ function fmtTime(value: string) {
 }
 
 function portionFor(minutes: number) {
-  return Math.max(0.01, Math.min(1, Math.round((minutes / DEFAULT_BLOCK_MINUTES) * 100) / 100));
+  return Math.max(0.01, Math.min(1, Math.round((minutes / DEFAULT_BLOCK_MINUTES) * 10000) / 10000));
 }
 
 function newLocalId(prefix: string) {
@@ -52,7 +52,7 @@ function newLocalId(prefix: string) {
 
 function actionTitle(action: CatchUpAction) {
   if (action.type === "extra_block") {
-    return `${dayLabel(action.day_of_week)} catch-up block`;
+    return `${dayLabel(action.day_of_week)} recovery time`;
   }
   return `${dayLabel(action.day_of_week)} ${action.slot} shorter break`;
 }

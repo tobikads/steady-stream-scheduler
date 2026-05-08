@@ -70,13 +70,53 @@ export function blockDurationMinutes(
   return Math.max(0, Math.round((end - start) / 60000));
 }
 
+function minutesSinceMidnight(value: string) {
+  const date = new Date(value);
+  return date.getHours() * 60 + date.getMinutes();
+}
+
+export function isRecoveryBlock(
+  block: Pick<
+    WorkBlockRow,
+    "is_catch_up" | "day_of_week" | "slot" | "scheduled_start" | "scheduled_end"
+  >,
+) {
+  if (block.is_catch_up) return true;
+  if (block.slot !== "EVE") return false;
+
+  const start = minutesSinceMidnight(block.scheduled_start);
+  const end = minutesSinceMidnight(block.scheduled_end);
+  if (end <= start) return false;
+
+  const mondayOrWednesdayWindow =
+    [1, 3].includes(block.day_of_week) && start >= 18 * 60 && end <= 22 * 60;
+  const eveningGapWindow =
+    [2, 4, 5, 6].includes(block.day_of_week) && start >= 18 * 60 && end <= 20 * 60;
+  return mondayOrWednesdayWindow || eveningGapWindow;
+}
+
+export function blockDisplayTitle(block: WorkBlockRow, stage: StageRow | null | undefined) {
+  if (isRecoveryBlock(block)) return "Recovery time";
+  return stage ? STAGE_LABEL[stage.kind] : "Unassigned";
+}
+
+export function recoveryStageDetail(block: WorkBlockRow, stage: StageRow | null | undefined) {
+  if (!isRecoveryBlock(block) || !stage) return null;
+  return `Makes up ${STAGE_LABEL[stage.kind]}`;
+}
+
 export function blockWorkCapacityMinutes(
   block: Pick<
     WorkBlockRow,
-    "scheduled_start" | "scheduled_end" | "assigned_portion" | "is_catch_up"
+    | "scheduled_start"
+    | "scheduled_end"
+    | "assigned_portion"
+    | "is_catch_up"
+    | "day_of_week"
+    | "slot"
   >,
 ) {
-  if (block.is_catch_up) return blockDurationMinutes(block);
+  if (isRecoveryBlock(block)) return blockDurationMinutes(block);
   return DEFAULT_BLOCK_MINUTES * Number(block.assigned_portion || 1);
 }
 
@@ -109,7 +149,7 @@ function stageLabelFor(stages: StageRow[], stageId: string | null) {
 function stageQueue(stages: StageRow[], blocks: WorkBlockRow[]) {
   const futureAssignedMinutes = new Map<string, number>();
   for (const block of blocks) {
-    if (!isClosedBlockStatus(block.status) && !block.is_catch_up && block.assigned_stage_id) {
+    if (!isClosedBlockStatus(block.status) && block.assigned_stage_id) {
       futureAssignedMinutes.set(
         block.assigned_stage_id,
         (futureAssignedMinutes.get(block.assigned_stage_id) ?? 0) + blockWorkCapacityMinutes(block),
@@ -160,7 +200,7 @@ function usableWindow(day: number, start: Date, end: Date, blocks: WorkBlockRow[
       : start;
   const minutes = Math.round((end.getTime() - adjustedStart.getTime()) / 60000);
   const overlapsExistingCatchUp = blocks.some((block) => {
-    if (!block.is_catch_up || block.day_of_week !== day) return false;
+    if (!isRecoveryBlock(block) || block.day_of_week !== day) return false;
     const blockStart = new Date(block.scheduled_start).getTime();
     const blockEnd = new Date(block.scheduled_end).getTime();
     return blockStart < end.getTime() && blockEnd > adjustedStart.getTime();
