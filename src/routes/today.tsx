@@ -6,7 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useCurrentWeek } from "@/hooks/use-current-week";
 import { applyRebalance } from "@/lib/week-setup";
 import { STAGE_LABEL } from "@/lib/schedule";
-import { blockDurationMinutes, plannedBreakMinutes } from "@/lib/catch-up";
+import { blockWorkCapacityMinutes, plannedBreakMinutes } from "@/lib/catch-up";
 import { isWorkBlockSchemaCacheError } from "@/lib/supabase-errors";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -784,7 +784,7 @@ function TimerPanel({
   const currentWorkMs = phase === "work" ? Math.min(elapsed, WORK_MS) : 0;
   const actualWorkMs = completedWorkMs + currentWorkMs;
   const actualWorkMinutes = Math.max(0, Math.round(actualWorkMs / 60000));
-  const scheduledMinutes = block ? Math.max(1, blockDurationMinutes(block)) : 1;
+  const scheduledMinutes = block ? Math.max(1, blockWorkCapacityMinutes(block)) : 1;
   const calculatedPortion = Math.min(
     1,
     Math.round((actualWorkMinutes / scheduledMinutes) * 100) / 100,
@@ -1119,7 +1119,7 @@ function TimerPanel({
           {Math.round(calculatedPortion * 100)}%
         </div>
         <div className="mt-1 text-xs text-muted-foreground">
-          {actualWorkMinutes}m focused out of {scheduledMinutes}m scheduled.
+          {actualWorkMinutes}m focused out of {scheduledMinutes}m expected.
         </div>
       </div>
       <div className="flex justify-end gap-2">
