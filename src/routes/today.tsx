@@ -1,11 +1,11 @@
 import { AppShell } from "@/components/AppShell";
 import { CloudSyncNotice } from "@/components/CloudSyncNotice";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentWeek } from "@/hooks/use-current-week";
 import { applyRebalance } from "@/lib/week-setup";
-import { STAGE_LABEL } from "@/lib/schedule";
+import { STAGE_LABEL, slotLabel } from "@/lib/schedule";
 import {
   blockDisplayTitle,
   blockWorkCapacityMinutes,
@@ -60,7 +60,6 @@ export const Route = createFileRoute("/today")({
   }),
 });
 
-const WORK_MS = 60 * 60 * 1000;
 const MAX_PAUSE_MS = 10 * 60 * 1000;
 const MAX_PAUSES_PER_BLOCK = 2;
 type TimerPhase = "work" | "break";
@@ -155,6 +154,19 @@ function clearTimerSession(videoId: string, blockId: string) {
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+function breakMinutesBetween(block: WorkBlockRow, nextBlock: WorkBlockRow | undefined) {
+  if (!nextBlock || block.day_of_week !== nextBlock.day_of_week) return 0;
+  const end = new Date(block.scheduled_end).getTime();
+  const nextStart = new Date(nextBlock.scheduled_start).getTime();
+  return Math.max(0, Math.round((nextStart - end) / 60000));
+}
+function breakLabel(minutes: number) {
+  return minutes >= 60 ? "Long Break" : "Break";
+}
+function formatBreakDuration(minutes: number) {
+  if (minutes >= 60) return `${Math.round(minutes / 60)}h`;
+  return `${minutes}m`;
 }
 function isSameLocalDay(iso: string, ref: Date) {
   const d = new Date(iso);
@@ -337,32 +349,46 @@ function TodayPageInner() {
           <Card className="p-6 text-center text-muted-foreground">No scheduled blocks today.</Card>
         ) : (
           <Card className="p-2 divide-y divide-border">
-            {todayBlocks.map((b) => {
+            {todayBlocks.map((b, index) => {
               const stage = data.stages.find((s) => s.id === b.assigned_stage_id);
               const title = blockDisplayTitle(b, stage);
               const recoveryDetail = recoveryStageDetail(b, stage);
               const meta = badgeMeta(b.status);
+              const breakMinutes = breakMinutesBetween(b, todayBlocks[index + 1]);
               return (
-                <div
-                  key={b.id}
-                  className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm"
-                >
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="text-[10px]">
-                      {b.slot}
-                    </Badge>
-                    <span className="tabular-nums text-muted-foreground">
-                      {fmtTime(b.scheduled_start)} - {fmtTime(b.scheduled_end)}
+                <Fragment key={b.id}>
+                  <div className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="outline" className="text-[10px]">
+                        {slotLabel(b.slot)}
+                      </Badge>
+                      <span className="tabular-nums text-muted-foreground">
+                        {fmtTime(b.scheduled_start)} - {fmtTime(b.scheduled_end)}
+                      </span>
+                      <span className="font-medium">{title}</span>
+                      {recoveryDetail && (
+                        <span className="text-xs text-muted-foreground">{recoveryDetail}</span>
+                      )}
+                    </div>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${meta.className}`}>
+                      {meta.label}
                     </span>
-                    <span className="font-medium">{title}</span>
-                    {recoveryDetail && (
-                      <span className="text-xs text-muted-foreground">{recoveryDetail}</span>
-                    )}
                   </div>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded border ${meta.className}`}>
-                    {meta.label}
-                  </span>
-                </div>
+                  {breakMinutes > 0 && (
+                    <div className="flex items-center justify-between gap-3 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                      <span className="font-medium text-foreground">
+                        {breakLabel(breakMinutes)}
+                      </span>
+                      <span className="tabular-nums">
+                        {fmtTime(b.scheduled_end)} -{" "}
+                        {fmtTime(todayBlocks[index + 1].scheduled_start)}
+                      </span>
+                      <Badge variant="outline" className="text-[10px]">
+                        {formatBreakDuration(breakMinutes)}
+                      </Badge>
+                    </div>
+                  )}
+                </Fragment>
               );
             })}
           </Card>
@@ -629,7 +655,7 @@ function NotesPanel({
         </div>
         {block && (
           <Badge variant="outline" className="text-[10px]">
-            {block.slot}
+            {slotLabel(block.slot)}
           </Badge>
         )}
       </div>
@@ -789,14 +815,16 @@ function TimerPanel({
   const isPaused = pausedAt !== null;
   const elapsed =
     isActive && workStartedAt ? Math.max(0, Date.now() - workStartedAt - activePauseMs) : 0;
-  const workRemaining = Math.max(0, WORK_MS - elapsed);
-  const breakMs = Math.max(1, plannedBreakMinutes(block ?? { planned_break_minutes: 15 })) * 60000;
+  const scheduledMinutes = block ? Math.max(1, blockWorkCapacityMinutes(block)) : 60;
+  const workMs = scheduledMinutes * 60000;
+  const workRemaining = Math.max(0, workMs - elapsed);
+  const plannedBreak = plannedBreakMinutes(block ?? { planned_break_minutes: 15 });
+  const breakMs = Math.max(1, plannedBreak) * 60000;
   const breakElapsed = breakStart ? Math.max(0, Date.now() - breakStart - activePauseMs) : 0;
   const breakRemaining = Math.max(0, breakMs - breakElapsed);
-  const currentWorkMs = phase === "work" ? Math.min(elapsed, WORK_MS) : 0;
+  const currentWorkMs = phase === "work" ? Math.min(elapsed, workMs) : 0;
   const actualWorkMs = completedWorkMs + currentWorkMs;
   const actualWorkMinutes = Math.max(0, Math.round(actualWorkMs / 60000));
-  const scheduledMinutes = block ? Math.max(1, blockWorkCapacityMinutes(block)) : 1;
   const calculatedPortion = Math.min(
     1,
     Math.round((actualWorkMinutes / scheduledMinutes) * 100) / 100,
@@ -838,7 +866,7 @@ function TimerPanel({
     ],
   );
 
-  // Auto-trigger break when work hour is up
+  // Auto-trigger break when the scheduled focus session is up.
   useEffect(() => {
     if (
       isActive &&
@@ -848,8 +876,15 @@ function TimerPanel({
       !chimedWorkRef.current
     ) {
       chimedWorkRef.current = true;
-      toast.info(`Hour's up — take a ${Math.round(breakMs / 60000)}-minute break.`);
-      setCompletedWorkMs((ms) => ms + Math.min(elapsed, WORK_MS));
+      if (plannedBreak > 0) {
+        toast.info(`Hour's up - take a ${plannedBreak}-minute break.`);
+      }
+      setCompletedWorkMs((ms) => ms + Math.min(elapsed, workMs));
+      if (plannedBreak <= 0) {
+        toast.success("Session complete. Clock out when you're ready.");
+        setWrapping(true);
+        return;
+      }
       setPhase("break");
       setBreakStart(Date.now());
       setPausedAt(null);
@@ -865,7 +900,18 @@ function TimerPanel({
       chimedBreakRef.current = true;
       toast.success("Break's over. Back to work.");
     }
-  }, [isActive, isPaused, phase, workRemaining, breakRemaining, breakStart, elapsed, breakMs]);
+  }, [
+    isActive,
+    isPaused,
+    phase,
+    workRemaining,
+    breakRemaining,
+    breakStart,
+    elapsed,
+    workMs,
+    breakMs,
+    plannedBreak,
+  ]);
 
   const pauseTimer = (reason: PauseReasonId) => {
     if (pausedAt) return;
@@ -923,27 +969,6 @@ function TimerPanel({
     });
     toast.warning("Pause time is over. Got to go back to work.");
   }, [pausedAt, pauseRemaining, phasePausedMs, persistTimer, sessionPausedMs]);
-
-  const returnToWork = () => {
-    const nextWorkStartedAt = Date.now();
-    setPhase("work");
-    setWorkStartedAt(nextWorkStartedAt);
-    setBreakStart(null);
-    setPausedAt(null);
-    setPhasePausedMs(0);
-    setChoosingPauseReason(false);
-    chimedWorkRef.current = false;
-    chimedBreakRef.current = false;
-    persistTimer({
-      phase: "work",
-      workStartedAt: nextWorkStartedAt,
-      breakStart: null,
-      pausedAt: null,
-      phasePausedMs: 0,
-      chimedWork: false,
-      chimedBreak: false,
-    });
-  };
 
   const clockIn = async () => {
     if (!block) return;
@@ -1222,10 +1247,11 @@ function TimerPanel({
   // Active — work or break
   if (phase === "break") {
     const ringPct = (breakRemaining / breakMs) * 100;
+    const currentBreakLabel = plannedBreak >= 60 ? "Long break" : "Break";
     return (
       <Card className="p-8 flex flex-col items-center text-center gap-4">
         <div className="flex items-center gap-2 text-amber-600 text-xs uppercase tracking-wider">
-          <Coffee className="size-4" /> Break
+          <Coffee className="size-4" /> {currentBreakLabel}
         </div>
         <TimerRing
           pct={Math.min(100, ringPct)}
@@ -1239,13 +1265,14 @@ function TimerPanel({
           </div>
           <div className="text-lg font-semibold tabular-nums">{fmtWorkDone(actualWorkMs)}</div>
         </div>
-        <div className="text-sm text-muted-foreground">15-minute breather. Stand up, hydrate.</div>
+        <div className="text-sm text-muted-foreground">
+          {formatBreakDuration(plannedBreak)} breather. Stand up, hydrate.
+        </div>
         {!wrapping ? (
           <div className="flex flex-col items-center gap-3">
             <div className="flex items-center gap-2">
-              <Button onClick={returnToWork}>Back to work</Button>
-              <Button variant="secondary" onClick={() => setWrapping(true)}>
-                <Square className="size-4 mr-2" /> Clock out
+              <Button onClick={() => setWrapping(true)}>
+                <Square className="size-4 mr-2" /> Clock out session
               </Button>
             </div>
             {pauseControls}
@@ -1257,7 +1284,7 @@ function TimerPanel({
     );
   }
 
-  const ringPct = Math.min(100, (workRemaining / WORK_MS) * 100);
+  const ringPct = Math.min(100, (workRemaining / workMs) * 100);
   return (
     <Card className="p-8 flex flex-col items-center text-center gap-4">
       <div className="text-xs uppercase tracking-wider text-muted-foreground">Working on</div>

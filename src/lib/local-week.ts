@@ -107,7 +107,7 @@ function createLocalWeekFor(monday: Date): VideoBundle {
       status: "upcoming",
       notes: null,
       is_catch_up: false,
-      planned_break_minutes: 15,
+      planned_break_minutes: tpl.breakAfterMinutes,
       pause_count: 0,
       pause_minutes: 0,
       task_snapshot: null,

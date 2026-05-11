@@ -14,7 +14,7 @@ import {
 } from "@/lib/catch-up";
 import type { WorkBlockRow } from "@/lib/db-types";
 import { updateLocalWeek } from "@/lib/local-week";
-import { STAGE_LABEL } from "@/lib/schedule";
+import { FOCUS_SESSION_MINUTES, STAGE_LABEL, slotLabel } from "@/lib/schedule";
 import { isWorkBlockSchemaCacheError } from "@/lib/supabase-errors";
 import { applyRebalance } from "@/lib/week-setup";
 import { useCurrentWeek } from "@/hooks/use-current-week";
@@ -50,18 +50,26 @@ function newLocalId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function recoveryStartFor(action: CatchUpAction) {
+  return action.type === "extra_block" ? action.scheduled_start : action.recovery_start;
+}
+
+function recoveryEndFor(action: CatchUpAction) {
+  return action.type === "extra_block" ? action.scheduled_end : action.recovery_end;
+}
+
 function actionTitle(action: CatchUpAction) {
   if (action.type === "extra_block") {
     return `${dayLabel(action.day_of_week)} recovery time`;
   }
-  return `${dayLabel(action.day_of_week)} ${action.slot} shorter break`;
+  return `${dayLabel(action.day_of_week)} ${slotLabel(action.slot)} shorter break`;
 }
 
 function actionDetail(action: CatchUpAction) {
   if (action.type === "extra_block") {
     return `${fmtTime(action.scheduled_start)}-${fmtTime(action.scheduled_end)} for ${action.stageLabel}`;
   }
-  return `${action.stageLabel}: ${action.fromBreakMinutes}m rest becomes ${action.toBreakMinutes}m`;
+  return `${fmtTime(action.recovery_start)}-${fmtTime(action.recovery_end)} for ${action.stageLabel}; ${action.fromBreakMinutes}m rest becomes ${action.toBreakMinutes}m`;
 }
 
 function applyLocalActions(videoId: string, actions: CatchUpAction[]) {
@@ -84,37 +92,32 @@ function applyLocalActions(videoId: string, actions: CatchUpAction[]) {
         updated_at: now,
       };
     });
-    const extraBlocks: WorkBlockRow[] = actions
-      .filter(
-        (action): action is Extract<CatchUpAction, { type: "extra_block" }> =>
-          action.type === "extra_block",
-      )
-      .map((action) => ({
-        id: newLocalId("local-catch-up"),
-        video_id: videoId,
-        user_id: "local",
-        day_of_week: action.day_of_week,
-        slot: action.slot,
-        scheduled_start: action.scheduled_start,
-        scheduled_end: action.scheduled_end,
-        assigned_stage_id: action.stageId,
-        assigned_portion: portionFor(action.minutes),
-        clock_in_at: null,
-        clock_out_at: null,
-        actual_minutes: 0,
-        status: "upcoming",
-        notes: null,
-        is_catch_up: true,
-        planned_break_minutes: 10,
-        pause_count: 0,
-        pause_minutes: 0,
-        task_snapshot: null,
-        created_at: now,
-        updated_at: now,
-      }));
+    const recoveryBlocks: WorkBlockRow[] = actions.map((action) => ({
+      id: newLocalId("local-catch-up"),
+      video_id: videoId,
+      user_id: "local",
+      day_of_week: action.day_of_week,
+      slot: "REC" as const,
+      scheduled_start: recoveryStartFor(action),
+      scheduled_end: recoveryEndFor(action),
+      assigned_stage_id: action.stageId,
+      assigned_portion: portionFor(action.minutes),
+      clock_in_at: null,
+      clock_out_at: null,
+      actual_minutes: 0,
+      status: "upcoming",
+      notes: null,
+      is_catch_up: true,
+      planned_break_minutes: 10,
+      pause_count: 0,
+      pause_minutes: 0,
+      task_snapshot: null,
+      created_at: now,
+      updated_at: now,
+    }));
     return {
       ...bundle,
-      blocks: [...updatedBlocks, ...extraBlocks].sort((a, b) =>
+      blocks: [...updatedBlocks, ...recoveryBlocks].sort((a, b) =>
         a.scheduled_start.localeCompare(b.scheduled_start),
       ),
       video: { ...bundle.video, updated_at: now },
@@ -123,35 +126,32 @@ function applyLocalActions(videoId: string, actions: CatchUpAction[]) {
 }
 
 async function applyCloudActions(videoId: string, userId: string, actions: CatchUpAction[]) {
-  const extraBlocks = actions.filter(
-    (action): action is Extract<CatchUpAction, { type: "extra_block" }> =>
-      action.type === "extra_block",
-  );
+  const recoveryBlocks = actions;
   const restCuts = actions.filter(
     (action): action is Extract<CatchUpAction, { type: "short_break" }> =>
       action.type === "short_break",
   );
 
-  if (extraBlocks.length > 0) {
-    const richPayload = extraBlocks.map((action) => ({
+  if (recoveryBlocks.length > 0) {
+    const richPayload = recoveryBlocks.map((action) => ({
       video_id: videoId,
       user_id: userId,
       day_of_week: action.day_of_week,
-      slot: action.slot,
-      scheduled_start: action.scheduled_start,
-      scheduled_end: action.scheduled_end,
+      slot: "REC",
+      scheduled_start: recoveryStartFor(action),
+      scheduled_end: recoveryEndFor(action),
       assigned_stage_id: action.stageId,
       assigned_portion: portionFor(action.minutes),
       is_catch_up: true,
       planned_break_minutes: 10,
     }));
-    const basePayload = extraBlocks.map((action) => ({
+    const basePayload = recoveryBlocks.map((action) => ({
       video_id: videoId,
       user_id: userId,
       day_of_week: action.day_of_week,
-      slot: action.slot,
-      scheduled_start: action.scheduled_start,
-      scheduled_end: action.scheduled_end,
+      slot: "REC",
+      scheduled_start: recoveryStartFor(action),
+      scheduled_end: recoveryEndFor(action),
       assigned_stage_id: action.stageId,
       assigned_portion: portionFor(action.minutes),
     }));
@@ -207,13 +207,13 @@ function CatchUpPageInner() {
   );
   const restRecoveryMinutes = restActions.reduce((sum, action) => sum + action.minutes, 0);
   const missBudgetLabel =
-    plan.missBudgetMinutes >= DEFAULT_BLOCK_MINUTES
-      ? `${plan.maxMissableFullBlocks} full ${plan.maxMissableFullBlocks === 1 ? "block" : "blocks"}`
+    plan.missBudgetMinutes >= FOCUS_SESSION_MINUTES
+      ? `${plan.maxMissableFullBlocks} full ${plan.maxMissableFullBlocks === 1 ? "session" : "sessions"}`
       : plan.missBudgetMinutes > 0
-        ? "Less than 1 block"
-        : "0 blocks";
+        ? "Less than 1 session"
+        : "0 sessions";
   const nextMissedBlockLabel =
-    plan.missBudgetMinutes >= DEFAULT_BLOCK_MINUTES ? "Still recoverable" : "Breaks Saturday";
+    plan.missBudgetMinutes >= FOCUS_SESSION_MINUTES ? "Still recoverable" : "Breaks Saturday";
   const status =
     plan.state === "on_track"
       ? { label: "On track", className: "bg-primary/15 text-primary border-primary/30" }
@@ -290,7 +290,7 @@ function CatchUpPageInner() {
           <div>
             <h2 className="font-semibold">Recovery room</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              One full missed block equals {formatCatchUpMinutes(DEFAULT_BLOCK_MINUTES)} of focus.
+              One missed work session equals {formatCatchUpMinutes(FOCUS_SESSION_MINUTES)} of focus.
             </p>
           </div>
           <Badge variant="outline" className={status.className}>
@@ -306,17 +306,17 @@ function CatchUpPageInner() {
             label="Buffer after current gap"
             value={formatCatchUpMinutes(plan.missBudgetMinutes)}
           />
-          <Stat label="Full blocks you can miss" value={missBudgetLabel} />
-          <Stat label="If 1 more block is missed" value={nextMissedBlockLabel} />
+          <Stat label="Full sessions you can miss" value={missBudgetLabel} />
+          <Stat label="If 1 more session is missed" value={nextMissedBlockLabel} />
         </div>
         {plan.state === "impossible" ? (
           <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
             The current gap already uses more time than the remaining catch-up windows can provide.
           </div>
-        ) : plan.missBudgetMinutes < DEFAULT_BLOCK_MINUTES ? (
+        ) : plan.missBudgetMinutes < FOCUS_SESSION_MINUTES ? (
           <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700">
-            There is less than one full block of room left, so the next missed block makes Saturday
-            unrealistic.
+            There is less than one full session of room left, so the next missed session makes
+            Saturday unrealistic.
           </div>
         ) : (
           <div className="rounded-md border border-border p-3 text-sm text-muted-foreground">
@@ -389,7 +389,8 @@ function CatchUpPageInner() {
                 </div>
                 <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Clock3 className="size-3.5" />
-                  {restActions.length} future breaks move from 15m to 10m.
+                  {formatCatchUpMinutes(restRecoveryMinutes)} of focus is recovered by shortening
+                  upcoming breaks to 10m.
                 </div>
               </div>
             )}
@@ -406,12 +407,14 @@ function CatchUpPageInner() {
               const planned = Number(stage.planned_blocks);
               const actual = Number(stage.actual_blocks);
               const pct = planned > 0 ? Math.min(100, (actual / planned) * 100) : 0;
+              const actualHours = (actual * DEFAULT_BLOCK_MINUTES) / 60;
+              const plannedHours = (planned * DEFAULT_BLOCK_MINUTES) / 60;
               return (
                 <div key={stage.id} className="space-y-1.5">
                   <div className="flex justify-between gap-3 text-sm">
                     <span className="font-medium">{STAGE_LABEL[stage.kind]}</span>
                     <span className="text-muted-foreground tabular-nums">
-                      {actual.toFixed(1)} / {planned.toFixed(1)} blocks
+                      {actualHours.toFixed(1)} / {plannedHours.toFixed(1)} hours
                     </span>
                   </div>
                   <Progress value={pct} />

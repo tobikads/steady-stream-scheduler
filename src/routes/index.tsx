@@ -33,7 +33,9 @@ function LandingPage() {
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <span className="font-semibold tracking-tight text-lg">YT Video Scheduler</span>
           <Link to="/login">
-            <Button variant="ghost" size="sm">Sign in</Button>
+            <Button variant="ghost" size="sm">
+              Sign in
+            </Button>
           </Link>
         </div>
       </header>
@@ -49,8 +51,8 @@ function LandingPage() {
             <span className="text-primary">Start delivering.</span>
           </h1>
           <p className="text-lg text-muted-foreground max-w-xl mx-auto">
-            16 scheduled work blocks per week. Clock in, log your progress, and
-            YT Video Scheduler rebalances your week toward Saturday — automatically.
+            16 scheduled work blocks per week. Clock in, log your progress, and YT Video Scheduler
+            rebalances your week toward Saturday — automatically.
           </p>
           <div className="flex items-center justify-center gap-3 pt-2">
             <Link to="/login">
@@ -60,8 +62,14 @@ function LandingPage() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-12 text-left">
             {[
               { t: "Fixed capacity", d: "Mon–Sat AM/PM blocks plus Tue/Thu/Fri/Sat evenings." },
-              { t: "Live rebalancing", d: "Behind or ahead, your week reshuffles after every clock-out." },
-              { t: "Saturday delivery", d: "A status bar tells you if your release date is at risk." },
+              {
+                t: "Live rebalancing",
+                d: "Behind or ahead, your week reshuffles after every clock-out.",
+              },
+              {
+                t: "Saturday delivery",
+                d: "A status bar tells you if your release date is at risk.",
+              },
             ].map((f) => (
               <div key={f.t} className="rounded-lg border border-border p-4">
                 <div className="font-medium">{f.t}</div>

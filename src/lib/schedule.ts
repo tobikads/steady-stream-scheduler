@@ -40,7 +40,14 @@ export const STAGE_DEFAULTS: Record<StageKind, { default: number; min: number; m
   finishing: { default: 1, min: 1, max: 3 },
 };
 
-export type Slot = "AM" | "PM" | "EVE";
+export type Slot = "AM" | "PM" | "EVE" | "REC" | `S${number}`;
+
+export const FOCUS_SESSION_MINUTES = 60;
+export const STAGE_BLOCK_MINUTES = 3 * FOCUS_SESSION_MINUTES;
+export const SCHEDULE_BREAK_MINUTES = 15;
+export const SCHEDULE_LONG_BREAK_MINUTES = 60;
+export const SCHEDULE_DAY_START_MINUTES = 9 * 60;
+export const SCHEDULE_DAY_END_MINUTES = 21 * 60;
 
 export interface BlockTemplate {
   day_of_week: number; // 1=Mon..6=Sat
@@ -49,45 +56,60 @@ export interface BlockTemplate {
   startMinute: number;
   endHour: number;
   endMinute: number;
+  breakAfterMinutes: number;
 }
 
-// Mon, Wed: AM+PM. Tue, Thu, Fri, Sat: AM+PM+EVE. 16 blocks total.
+function splitMinutes(minutes: number) {
+  return {
+    hour: Math.floor(minutes / 60),
+    minute: minutes % 60,
+  };
+}
+
+const DAILY_FOCUS_TEMPLATE = [
+  { start: 9 * 60, end: 10 * 60, breakAfterMinutes: SCHEDULE_BREAK_MINUTES },
+  { start: 10 * 60 + 15, end: 11 * 60 + 15, breakAfterMinutes: SCHEDULE_LONG_BREAK_MINUTES },
+  { start: 12 * 60 + 15, end: 13 * 60 + 15, breakAfterMinutes: SCHEDULE_BREAK_MINUTES },
+  { start: 13 * 60 + 30, end: 14 * 60 + 30, breakAfterMinutes: SCHEDULE_LONG_BREAK_MINUTES },
+  { start: 15 * 60 + 30, end: 16 * 60 + 30, breakAfterMinutes: SCHEDULE_BREAK_MINUTES },
+  { start: 16 * 60 + 45, end: 17 * 60 + 45, breakAfterMinutes: SCHEDULE_LONG_BREAK_MINUTES },
+  { start: 18 * 60 + 45, end: 19 * 60 + 45, breakAfterMinutes: SCHEDULE_BREAK_MINUTES },
+  { start: 20 * 60, end: 21 * 60, breakAfterMinutes: 0 },
+] as const;
+
+// Detailed focus-cycle day: 8 hours of work, 1 hour of short breaks, 3 hours of long breaks.
 export const WEEK_TEMPLATE: BlockTemplate[] = (() => {
   const out: BlockTemplate[] = [];
   for (let d = 1; d <= 6; d++) {
-    out.push({
-      day_of_week: d,
-      slot: "AM",
-      startHour: 9,
-      startMinute: 0,
-      endHour: 12,
-      endMinute: 30,
-    });
-    out.push({
-      day_of_week: d,
-      slot: "PM",
-      startHour: 14,
-      startMinute: 30,
-      endHour: 18,
-      endMinute: 0,
-    });
-    if (d === 2 || d === 4 || d === 5 || d === 6) {
+    DAILY_FOCUS_TEMPLATE.forEach((sessionTemplate, index) => {
+      const startParts = splitMinutes(sessionTemplate.start);
+      const endParts = splitMinutes(sessionTemplate.end);
       out.push({
         day_of_week: d,
-        slot: "EVE",
-        startHour: 20,
-        startMinute: 0,
-        endHour: 23,
-        endMinute: 30,
+        slot: `S${index + 1}`,
+        startHour: startParts.hour,
+        startMinute: startParts.minute,
+        endHour: endParts.hour,
+        endMinute: endParts.minute,
+        breakAfterMinutes: sessionTemplate.breakAfterMinutes,
       });
-    }
+    });
   }
   return out;
 })();
 
-export const TOTAL_WEEKLY_BLOCKS = WEEK_TEMPLATE.length; // 16
+export const TOTAL_WEEKLY_BLOCKS = WEEK_TEMPLATE.length;
 
 export const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+export function slotLabel(slot: Slot | string): string {
+  if (/^S\d+$/.test(slot)) return `Work ${slot.slice(1)}`;
+  if (slot === "AM") return "AM";
+  if (slot === "PM") return "PM";
+  if (slot === "EVE") return "EVE";
+  if (slot === "REC") return "Recovery";
+  return slot;
+}
 
 export function getMondayOf(d: Date): Date {
   const date = new Date(d);
@@ -137,6 +159,7 @@ export interface BlockInput {
   day_of_week: number;
   slot: Slot;
   scheduled_start: string;
+  scheduled_end: string;
   assigned_stage_id: string | null;
   assigned_portion: number;
   status: string;
@@ -166,13 +189,24 @@ function missedPortionsByStage(blocks: BlockInput[]) {
   return missed;
 }
 
+function blockDurationMinutes(block: Pick<BlockInput, "scheduled_start" | "scheduled_end">) {
+  const start = new Date(block.scheduled_start).getTime();
+  const end = new Date(block.scheduled_end).getTime();
+  return Math.max(0, Math.round((end - start) / 60000));
+}
+
+function blockCapacityPortion(block: Pick<BlockInput, "scheduled_start" | "scheduled_end">) {
+  return Math.max(
+    0.01,
+    Math.round((blockDurationMinutes(block) / STAGE_BLOCK_MINUTES) * 10000) / 10000,
+  );
+}
+
 /**
  * Computes new stage assignments for upcoming blocks.
  * - Closed blocks keep their existing assignment.
  * - Remaining work for each stage = max(0, planned - actual) using stage order.
- * - Each upcoming block gets one stage (portion=1) in order; final block of a stage may have <1.
- *   For UI simplicity we assign whole blocks per stage and ignore fractional remainder
- *   (rounded up so we don't underplan).
+ * - Each upcoming focus session credits part of a stage block; final sessions can be fractional.
  */
 export function rebalance(stages: StageInput[], blocks: BlockInput[]): RebalanceAssignment[] {
   const ordered = [...stages].sort((a, b) => a.order_index - b.order_index);
@@ -182,7 +216,7 @@ export function rebalance(stages: StageInput[], blocks: BlockInput[]): Rebalance
   const remaining = new Map<string, number>();
   for (const s of ordered) {
     const left = Math.max(0, s.planned_blocks - s.actual_blocks - (missed.get(s.id) ?? 0));
-    remaining.set(s.id, Math.ceil(left));
+    remaining.set(s.id, left);
   }
 
   const upcoming = blocks
@@ -193,16 +227,18 @@ export function rebalance(stages: StageInput[], blocks: BlockInput[]): Rebalance
   let stageIdx = 0;
 
   for (const block of upcoming) {
-    while (stageIdx < ordered.length && (remaining.get(ordered[stageIdx].id) ?? 0) <= 0) {
+    while (stageIdx < ordered.length && (remaining.get(ordered[stageIdx].id) ?? 0) <= 0.0001) {
       stageIdx++;
     }
+    const capacity = blockCapacityPortion(block);
     if (stageIdx >= ordered.length) {
-      assignments.push({ blockId: block.id, stageId: null, portion: 1 });
+      assignments.push({ blockId: block.id, stageId: null, portion: capacity });
       continue;
     }
     const stage = ordered[stageIdx];
-    assignments.push({ blockId: block.id, stageId: stage.id, portion: 1 });
-    remaining.set(stage.id, (remaining.get(stage.id) ?? 0) - 1);
+    const portion = Math.min(capacity, remaining.get(stage.id) ?? capacity);
+    assignments.push({ blockId: block.id, stageId: stage.id, portion });
+    remaining.set(stage.id, (remaining.get(stage.id) ?? 0) - portion);
   }
 
   return assignments;
@@ -216,6 +252,12 @@ export function upcomingBlockCount(blocks: BlockInput[]): number {
   return blocks.filter((b) => !isClosedBlockStatus(b.status)).length;
 }
 
+function upcomingStageBlockCapacity(blocks: BlockInput[]): number {
+  return blocks
+    .filter((b) => !isClosedBlockStatus(b.status))
+    .reduce((sum, block) => sum + blockCapacityPortion(block), 0);
+}
+
 export function deliveryStatus(
   stages: StageInput[],
   blocks: BlockInput[],
@@ -224,10 +266,10 @@ export function deliveryStatus(
   diffBlocks: number; // negative = behind, positive = ahead
 } {
   const remaining = totalRemainingBlocks(stages);
-  const upcoming = upcomingBlockCount(blocks);
+  const upcoming = upcomingStageBlockCapacity(blocks);
   const diff = upcoming - remaining;
   if (remaining > upcoming) return { state: "atrisk", diffBlocks: diff };
-  if (diff >= 2) return { state: "ahead", diffBlocks: diff };
-  if (diff === 0 || diff === 1) return { state: "ontrack", diffBlocks: diff };
+  if (diff >= 1) return { state: "ahead", diffBlocks: diff };
+  if (diff >= 0) return { state: "ontrack", diffBlocks: diff };
   return { state: "behind", diffBlocks: diff };
 }
