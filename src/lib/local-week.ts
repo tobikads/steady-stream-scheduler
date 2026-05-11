@@ -1,6 +1,7 @@
 import type { VideoBundle } from "@/hooks/use-current-week";
 import type { StageRow, VideoRow, WorkBlockRow } from "@/lib/db-types";
 import { isRecoveryBlock } from "@/lib/catch-up";
+import { buildDetailedScheduleFields, detailedScheduleMatches } from "@/lib/schedule-migration";
 import {
   STAGE_DEFAULTS,
   STAGE_ORDER,
@@ -22,6 +23,11 @@ function nowIso() {
 
 function canUseStorage() {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+}
+
+function localDateFromISODate(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
 }
 
 function applyDefaultStagePlan(stages: StageRow[]) {
@@ -121,7 +127,22 @@ function createLocalWeekFor(monday: Date): VideoBundle {
 
 function normalizeBundle(bundle: VideoBundle): VideoBundle {
   const stages = applyDefaultStagePlan(bundle.stages);
-  const overdueMarkedBlocks = markOverdueMissed(bundle.blocks.map(normalizeBlockDefaults));
+  const normalizedBlocks = bundle.blocks.map(normalizeBlockDefaults);
+  const monday = localDateFromISODate(bundle.video.week_start);
+  const scheduleBlocks = detailedScheduleMatches(monday, normalizedBlocks)
+    ? normalizedBlocks
+    : [
+        ...buildDetailedScheduleFields(monday, normalizedBlocks).map((field) => ({
+          ...field,
+          id: `local-block-${bundle.video.week_start}-${field.day_of_week}-${field.slot}`,
+          video_id: bundle.videoId,
+          user_id: bundle.video.user_id,
+          created_at: nowIso(),
+          updated_at: nowIso(),
+        })),
+        ...normalizedBlocks.filter(isRecoveryBlock),
+      ];
+  const overdueMarkedBlocks = markOverdueMissed(scheduleBlocks);
   const assignments = rebalance(stages, overdueMarkedBlocks);
   const blocks = overdueMarkedBlocks.map((block) => {
     if (isClosedBlockStatus(block.status) || isRecoveryBlock(block)) return block;
