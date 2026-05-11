@@ -12,6 +12,7 @@ import {
   StageKind,
 } from "./schedule";
 import { isRecoveryBlock } from "./catch-up";
+import { buildDetailedScheduleFields, detailedScheduleMatches } from "./schedule-migration";
 import { isWorkBlockSchemaCacheError } from "./supabase-errors";
 
 async function findWeekVideo(userId: string, weekStart: string) {
@@ -110,6 +111,44 @@ async function syncStageDefaults(videoId: string) {
   return true;
 }
 
+async function syncDetailedSchedule(videoId: string, userId: string, monday: Date) {
+  const { data: blocks, error: loadErr } = await supabase
+    .from("work_blocks")
+    .select("*")
+    .eq("video_id", videoId)
+    .order("scheduled_start");
+  if (loadErr) throw loadErr;
+
+  const existingBlocks = blocks ?? [];
+  if (detailedScheduleMatches(monday, existingBlocks)) return false;
+
+  const fields = buildDetailedScheduleFields(monday, existingBlocks);
+  const richBlocksPayload = fields.map((field) => ({
+    video_id: videoId,
+    user_id: userId,
+    ...field,
+  }));
+  const baseBlocksPayload = richBlocksPayload.map(
+    ({ is_catch_up, planned_break_minutes, pause_count, pause_minutes, task_snapshot, ...block }) =>
+      block,
+  );
+
+  let { error: insertErr } = await supabase.from("work_blocks").insert(richBlocksPayload);
+  if (isWorkBlockSchemaCacheError(insertErr)) {
+    const retry = await supabase.from("work_blocks").insert(baseBlocksPayload);
+    insertErr = retry.error;
+  }
+  if (insertErr) throw insertErr;
+
+  const oldIds = existingBlocks.filter((block) => !isRecoveryBlock(block)).map((block) => block.id);
+  if (oldIds.length > 0) {
+    const { error: deleteErr } = await supabase.from("work_blocks").delete().in("id", oldIds);
+    if (deleteErr) throw deleteErr;
+  }
+
+  return true;
+}
+
 export async function ensureCurrentWeek(userId: string): Promise<string> {
   const monday = getMondayOf(new Date());
   const weekStart = dateToISODate(monday);
@@ -118,6 +157,7 @@ export async function ensureCurrentWeek(userId: string): Promise<string> {
 
   if (existing) {
     const defaultsChanged = await syncStageDefaults(existing.id);
+    const scheduleChanged = await syncDetailedSchedule(existing.id, userId, monday);
     // Self-heal: if blocks exist but none are assigned, run rebalance.
     const { data: anyAssigned, error: assignedErr } = await supabase
       .from("work_blocks")
@@ -126,7 +166,7 @@ export async function ensureCurrentWeek(userId: string): Promise<string> {
       .not("assigned_stage_id", "is", null)
       .limit(1);
     if (assignedErr) throw assignedErr;
-    if (defaultsChanged || !anyAssigned || anyAssigned.length === 0) {
+    if (defaultsChanged || scheduleChanged || !anyAssigned || anyAssigned.length === 0) {
       const rebalanceResult = await applyRebalance(existing.id);
       if (!rebalanceResult.ok) throw new Error(rebalanceResult.error ?? "rebalance failed");
     }
