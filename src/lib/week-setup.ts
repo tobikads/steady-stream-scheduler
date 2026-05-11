@@ -12,6 +12,7 @@ import {
   StageKind,
 } from "./schedule";
 import { isRecoveryBlock } from "./catch-up";
+import { isWorkBlockSchemaCacheError } from "./supabase-errors";
 
 async function findWeekVideo(userId: string, weekStart: string) {
   const { data, error } = await supabase
@@ -52,7 +53,7 @@ async function seedWeek(userId: string, monday: Date): Promise<string> {
   const { error: sErr } = await supabase.from("stages").insert(stagesPayload);
   if (sErr) throw sErr;
 
-  const blocksPayload = WEEK_TEMPLATE.map((tpl) => {
+  const richBlocksPayload = WEEK_TEMPLATE.map((tpl) => {
     const { start, end } = buildBlockTimestamps(monday, tpl);
     return {
       video_id: video.id,
@@ -61,9 +62,15 @@ async function seedWeek(userId: string, monday: Date): Promise<string> {
       slot: tpl.slot,
       scheduled_start: start.toISOString(),
       scheduled_end: end.toISOString(),
+      planned_break_minutes: tpl.breakAfterMinutes,
     };
   });
-  const { error: bErr } = await supabase.from("work_blocks").insert(blocksPayload);
+  const baseBlocksPayload = richBlocksPayload.map(({ planned_break_minutes, ...block }) => block);
+  let { error: bErr } = await supabase.from("work_blocks").insert(richBlocksPayload);
+  if (isWorkBlockSchemaCacheError(bErr)) {
+    const retry = await supabase.from("work_blocks").insert(baseBlocksPayload);
+    bErr = retry.error;
+  }
   if (bErr) throw bErr;
 
   const rebalanceResult = await applyRebalance(video.id);
@@ -190,6 +197,7 @@ export async function applyRebalance(videoId: string): Promise<{ ok: boolean; er
       day_of_week: b.day_of_week,
       slot: b.slot as Slot,
       scheduled_start: b.scheduled_start,
+      scheduled_end: b.scheduled_end,
       assigned_stage_id: b.assigned_stage_id,
       assigned_portion: Number(b.assigned_portion),
       status: b.status,

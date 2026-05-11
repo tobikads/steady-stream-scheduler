@@ -7,13 +7,16 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import {
   DAY_LABELS,
+  STAGE_BLOCK_MINUTES,
   STAGE_LABEL,
   deliveryStatus,
+  slotLabel,
   totalRemainingBlocks,
   upcomingBlockCount,
 } from "@/lib/schedule";
 import { blockDisplayTitle, recoveryStageDetail } from "@/lib/catch-up";
 import { CheckCircle2 } from "lucide-react";
+import { Fragment } from "react";
 import type { WorkBlockRow, WorkBlockStatus } from "@/lib/db-types";
 
 export const Route = createFileRoute("/week")({
@@ -31,6 +34,22 @@ export const Route = createFileRoute("/week")({
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function breakMinutesBetween(block: WorkBlockRow, nextBlock: WorkBlockRow | undefined) {
+  if (!nextBlock || block.day_of_week !== nextBlock.day_of_week) return 0;
+  const end = new Date(block.scheduled_end).getTime();
+  const nextStart = new Date(nextBlock.scheduled_start).getTime();
+  return Math.max(0, Math.round((nextStart - end) / 60000));
+}
+
+function breakLabel(minutes: number) {
+  return minutes >= 60 ? "Long Break" : "Break";
+}
+
+function formatBreakDuration(minutes: number) {
+  if (minutes >= 60) return `${Math.round(minutes / 60)}h`;
+  return `${minutes}m`;
 }
 
 function effectiveBlockStatus(block: WorkBlockRow, now: Date): WorkBlockStatus {
@@ -126,6 +145,8 @@ function WeekPageInner() {
     (sum, s) => sum + Math.min(s.actual_blocks, s.planned_blocks),
     0,
   );
+  const totalPlannedHours = (totalPlanned * STAGE_BLOCK_MINUTES) / 60;
+  const totalActualHours = (totalActual * STAGE_BLOCK_MINUTES) / 60;
   const overallPct = totalPlanned > 0 ? Math.min(100, (totalActual / totalPlanned) * 100) : 0;
   const now = new Date();
   const scheduleBlocks = data.blocks.map((block) => ({
@@ -180,7 +201,7 @@ function WeekPageInner() {
               </span>
             </div>
             <p className="mt-1 text-sm text-muted-foreground tabular-nums">
-              {totalActual.toFixed(1)} of {totalPlanned.toFixed(1)} blocks complete
+              {totalActualHours.toFixed(1)} of {totalPlannedHours.toFixed(1)} hours complete
             </p>
           </div>
           <div className="text-right">
@@ -190,8 +211,11 @@ function WeekPageInner() {
         </div>
         <Progress value={overallPct} className="h-3" />
         <div className="grid gap-3 sm:grid-cols-2 text-sm">
-          <Stat label="Work left" value={`${remaining.toFixed(1)} blocks`} />
-          <Stat label="Blocks left" value={`${upcoming} scheduled`} />
+          <Stat
+            label="Focus left"
+            value={`${((remaining * STAGE_BLOCK_MINUTES) / 60).toFixed(1)} hours`}
+          />
+          <Stat label="Sessions left" value={`${upcoming} scheduled`} />
         </div>
       </Card>
 
@@ -203,12 +227,14 @@ function WeekPageInner() {
         {stages.map((s) => {
           const pct =
             s.planned_blocks > 0 ? Math.min(100, (s.actual_blocks / s.planned_blocks) * 100) : 0;
+          const actualHours = (s.actual_blocks * STAGE_BLOCK_MINUTES) / 60;
+          const plannedHours = (s.planned_blocks * STAGE_BLOCK_MINUTES) / 60;
           return (
             <div key={s.id} className="space-y-1.5">
               <div className="flex items-center justify-between text-sm">
                 <span className="font-medium">{STAGE_LABEL[s.kind]}</span>
                 <span className="text-muted-foreground tabular-nums">
-                  {s.actual_blocks.toFixed(1)} / {s.planned_blocks.toFixed(1)} blocks
+                  {actualHours.toFixed(1)} / {plannedHours.toFixed(1)} hours
                   {s.completed && <CheckCircle2 className="inline ml-1.5 size-3.5 text-primary" />}
                 </span>
               </div>
@@ -249,60 +275,78 @@ function WeekPageInner() {
                   </span>
                 </div>
                 <div className="space-y-2">
-                  {blocks.map((b) => {
+                  {blocks.map((b, index) => {
                     const stage = data.stages.find((s) => s.id === b.assigned_stage_id);
                     const title = blockDisplayTitle(b, stage);
                     const recoveryDetail = recoveryStageDetail(b, stage);
+                    const breakMinutes = breakMinutesBetween(b, blocks[index + 1]);
                     const displayStatus = effectiveBlockStatus(b, now);
                     const meta = statusMeta(displayStatus);
                     const isDone = displayStatus === "done";
                     const isPartial = displayStatus === "partial";
                     const isMissed = displayStatus === "missed" || displayStatus === "skipped";
                     return (
-                      <div
-                        key={b.id}
-                        className={`rounded-md border border-border p-2.5 text-sm space-y-1 ${
-                          isMissed ? "opacity-60" : ""
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5">
-                            <Badge variant="outline" className="text-[10px]">
-                              {b.slot}
-                            </Badge>
-                            <span className="text-xs text-muted-foreground tabular-nums">
-                              {fmtTime(b.scheduled_start)}
+                      <Fragment key={b.id}>
+                        <div
+                          className={`rounded-md border border-border p-2.5 text-sm space-y-1 ${
+                            isMissed ? "opacity-60" : ""
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5">
+                              <Badge variant="outline" className="text-[10px]">
+                                {slotLabel(b.slot)}
+                              </Badge>
+                              <span className="text-xs text-muted-foreground tabular-nums">
+                                {fmtTime(b.scheduled_start)} - {fmtTime(b.scheduled_end)}
+                              </span>
+                            </div>
+                            <span
+                              className={`text-[10px] px-1.5 py-0.5 rounded border ${meta.className}`}
+                            >
+                              {meta.label}
                             </span>
                           </div>
-                          <span
-                            className={`text-[10px] px-1.5 py-0.5 rounded border ${meta.className}`}
-                          >
-                            {meta.label}
-                          </span>
-                        </div>
-                        <div className="font-medium">
-                          {title !== "Unassigned" ? (
-                            title
-                          ) : (
-                            <span className="text-muted-foreground italic">unassigned</span>
+                          <div className="font-medium">
+                            {title !== "Unassigned" ? (
+                              title
+                            ) : (
+                              <span className="text-muted-foreground italic">unassigned</span>
+                            )}
+                          </div>
+                          {recoveryDetail && (
+                            <div className="text-xs text-muted-foreground">{recoveryDetail}</div>
+                          )}
+                          {isDone && b.actual_minutes > 0 && (
+                            <div className="text-xs text-muted-foreground flex items-center gap-1">
+                              <CheckCircle2 className="size-3 text-primary" /> {b.actual_minutes}m
+                              logged
+                            </div>
+                          )}
+                          {isPartial && b.actual_minutes > 0 && (
+                            <div className="text-xs text-muted-foreground flex items-center gap-1">
+                              <CheckCircle2 className="size-3 text-sky-600" /> {b.actual_minutes}m
+                              partial
+                            </div>
                           )}
                         </div>
-                        {recoveryDetail && (
-                          <div className="text-xs text-muted-foreground">{recoveryDetail}</div>
-                        )}
-                        {isDone && b.actual_minutes > 0 && (
-                          <div className="text-xs text-muted-foreground flex items-center gap-1">
-                            <CheckCircle2 className="size-3 text-primary" /> {b.actual_minutes}m
-                            logged
+                        {breakMinutes > 0 && (
+                          <div className="rounded-md border border-dashed border-border bg-muted/30 px-2.5 py-2 text-xs text-muted-foreground">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-medium text-foreground">
+                                {breakLabel(breakMinutes)}
+                              </span>
+                              <span className="tabular-nums">
+                                {fmtTime(b.scheduled_end)} -{" "}
+                                {fmtTime(blocks[index + 1].scheduled_start)}
+                              </span>
+                              <Badge variant="outline" className="text-[10px]">
+                                {formatBreakDuration(breakMinutes)}
+                              </Badge>
+                            </div>
                           </div>
                         )}
-                        {isPartial && b.actual_minutes > 0 && (
-                          <div className="text-xs text-muted-foreground flex items-center gap-1">
-                            <CheckCircle2 className="size-3 text-sky-600" /> {b.actual_minutes}m
-                            partial
-                          </div>
-                        )}
-                      </div>
+                      </Fragment>
                     );
                   })}
                 </div>

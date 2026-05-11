@@ -1,9 +1,16 @@
 import type { StageRow, VideoRow, WorkBlockRow } from "@/lib/db-types";
-import { DAY_LABELS, STAGE_LABEL, addDays, isClosedBlockStatus } from "@/lib/schedule";
+import {
+  DAY_LABELS,
+  FOCUS_SESSION_MINUTES,
+  STAGE_LABEL,
+  STAGE_BLOCK_MINUTES,
+  addDays,
+  isClosedBlockStatus,
+} from "@/lib/schedule";
 
 export const DEFAULT_BREAK_MINUTES = 15;
 export const SHORT_BREAK_MINUTES = 10;
-export const DEFAULT_BLOCK_MINUTES = 180;
+export const DEFAULT_BLOCK_MINUTES = STAGE_BLOCK_MINUTES;
 export const MIN_CATCH_UP_MINUTES = 30;
 export const MAX_CATCH_UP_MINUTES = 120;
 const CATCH_UP_CHUNKS = [120, 90, 60, 30] as const;
@@ -29,9 +36,13 @@ export type CatchUpAction =
       day_of_week: number;
       slot: WorkBlockRow["slot"];
       scheduled_start: string;
+      scheduled_end: string;
+      recovery_start: string;
+      recovery_end: string;
       minutes: number;
       fromBreakMinutes: number;
       toBreakMinutes: number;
+      stageId: string | null;
       stageLabel: string;
     };
 
@@ -82,6 +93,7 @@ export function isRecoveryBlock(
   >,
 ) {
   if (block.is_catch_up) return true;
+  if (block.slot === "REC") return true;
   if (block.slot !== "EVE") return false;
 
   const start = minutesSinceMidnight(block.scheduled_start);
@@ -117,11 +129,14 @@ export function blockWorkCapacityMinutes(
   >,
 ) {
   if (isRecoveryBlock(block)) return blockDurationMinutes(block);
-  return DEFAULT_BLOCK_MINUTES * Number(block.assigned_portion || 1);
+  return Math.min(
+    blockDurationMinutes(block),
+    DEFAULT_BLOCK_MINUTES * Number(block.assigned_portion || 1),
+  );
 }
 
 export function plannedBreakMinutes(block: Pick<WorkBlockRow, "planned_break_minutes">) {
-  return typeof block.planned_break_minutes === "number" && block.planned_break_minutes > 0
+  return typeof block.planned_break_minutes === "number" && block.planned_break_minutes >= 0
     ? block.planned_break_minutes
     : DEFAULT_BREAK_MINUTES;
 }
@@ -199,15 +214,15 @@ function usableWindow(day: number, start: Date, end: Date, blocks: WorkBlockRow[
       ? roundUpToNextFiveMinutes(now)
       : start;
   const minutes = Math.round((end.getTime() - adjustedStart.getTime()) / 60000);
-  const overlapsExistingCatchUp = blocks.some((block) => {
-    if (!isRecoveryBlock(block) || block.day_of_week !== day) return false;
+  const overlapsExistingWork = blocks.some((block) => {
+    if (block.day_of_week !== day || isClosedBlockStatus(block.status)) return false;
     const blockStart = new Date(block.scheduled_start).getTime();
     const blockEnd = new Date(block.scheduled_end).getTime();
     return blockStart < end.getTime() && blockEnd > adjustedStart.getTime();
   });
 
   if (
-    overlapsExistingCatchUp ||
+    overlapsExistingWork ||
     adjustedStart.getTime() <= now.getTime() ||
     minutes < MIN_CATCH_UP_MINUTES
   ) {
@@ -324,17 +339,37 @@ function buildRecoveryActions(
   const restCutBlocks = futureBlocks
     .filter(
       (block) =>
-        !block.is_catch_up &&
-        [2, 4, 5, 6].includes(block.day_of_week) &&
+        !isRecoveryBlock(block) &&
+        [1, 2, 3, 4, 5, 6].includes(block.day_of_week) &&
         plannedBreakMinutes(block) > SHORT_BREAK_MINUTES,
     )
-    .sort((a, b) => a.scheduled_start.localeCompare(b.scheduled_start));
+    .sort((a, b) => {
+      const aRoom = plannedBreakMinutes(a) - SHORT_BREAK_MINUTES;
+      const bRoom = plannedBreakMinutes(b) - SHORT_BREAK_MINUTES;
+      if (bRoom !== aRoom) return bRoom - aRoom;
+      return a.scheduled_start.localeCompare(b.scheduled_start);
+    });
 
   const restCutActions: CatchUpAction[] = [];
   for (const block of restCutBlocks) {
     if (remaining <= 0) break;
     const currentBreak = plannedBreakMinutes(block);
-    const minutes = Math.min(remaining, currentBreak - SHORT_BREAK_MINUTES);
+    const availableMinutes = currentBreak - SHORT_BREAK_MINUTES;
+    const alreadyBundledRecovery = sumActionMinutes(restCutActions);
+    if (availableMinutes < MIN_CATCH_UP_MINUTES && alreadyBundledRecovery === 0) continue;
+
+    const stageNeed = queue[stageIndex] ?? null;
+    const stageCapacity = stageNeed
+      ? Math.max(MIN_CATCH_UP_MINUTES, stageNeed.remainingMinutes)
+      : remaining;
+    const minutes = Math.min(remaining, stageCapacity, availableMinutes);
+    if (minutes <= 0) continue;
+
+    const recoveryStart = new Date(
+      new Date(block.scheduled_end).getTime() + SHORT_BREAK_MINUTES * 60000,
+    );
+    const recoveryEnd = new Date(recoveryStart.getTime() + minutes * 60000);
+    const stage = stageNeed?.stage ?? null;
     restCutActions.push({
       id: `rest-${block.id}`,
       type: "short_break",
@@ -342,11 +377,21 @@ function buildRecoveryActions(
       day_of_week: block.day_of_week,
       slot: block.slot,
       scheduled_start: block.scheduled_start,
+      scheduled_end: block.scheduled_end,
+      recovery_start: recoveryStart.toISOString(),
+      recovery_end: recoveryEnd.toISOString(),
       minutes,
       fromBreakMinutes: currentBreak,
       toBreakMinutes: SHORT_BREAK_MINUTES,
-      stageLabel: stageLabelFor(stages, block.assigned_stage_id),
+      stageId: stage?.id ?? null,
+      stageLabel: stage ? STAGE_LABEL[stage.kind] : stageLabelFor(stages, block.assigned_stage_id),
     });
+    if (stageNeed) {
+      stageNeed.remainingMinutes -= minutes;
+      while (stageIndex < queue.length && queue[stageIndex].remainingMinutes <= 0) {
+        stageIndex += 1;
+      }
+    }
     remaining -= minutes;
   }
 
@@ -407,7 +452,7 @@ export function buildCatchUpPlan(
     recoveryMinutes,
     remainingGapMinutes,
     missBudgetMinutes,
-    maxMissableFullBlocks: Math.floor(missBudgetMinutes / DEFAULT_BLOCK_MINUTES),
+    maxMissableFullBlocks: Math.floor(missBudgetMinutes / FOCUS_SESSION_MINUTES),
     actions,
   };
 }
